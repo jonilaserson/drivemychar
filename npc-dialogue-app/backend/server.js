@@ -5,8 +5,29 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
 const { Configuration, OpenAIApi } = require('openai');
+const fetch = require('node-fetch');
 
 const app = express();
+
+// Enable CORS and JSON parsing
+app.use(cors());
+app.use(express.json());
+
+// Check required environment variables
+if (!process.env.ELEVENLABS_API_KEY) {
+    console.error('ERROR: ELEVENLABS_API_KEY is not set in .env file');
+    process.exit(1);
+}
+
+if (!process.env.ELEVENLABS_VOICE_ID) {
+    console.error('ERROR: ELEVENLABS_VOICE_ID is not set in .env file');
+    process.exit(1);
+}
+
+console.log('ElevenLabs configuration:');
+console.log('- API Key:', process.env.ELEVENLABS_API_KEY.substring(0, 8) + '...');
+console.log('- Voice ID:', process.env.ELEVENLABS_VOICE_ID);
+
 const port = 3000;
 
 // Set up logging
@@ -17,17 +38,6 @@ const LOG_FILE = path.join(LOG_DIR, 'model_prompts.log');
 if (!fs.existsSync(LOG_DIR)) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
 }
-
-// Logging utility
-function logToFile(message) {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${message}\n`;
-    fs.appendFileSync(LOG_FILE, logMessage);
-    console.log(logMessage.trim()); // Also log to console
-}
-
-app.use(express.json());
-app.use(cors());
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -74,6 +84,14 @@ const MAX_HISTORY = 10; // Keep last 10 exchanges
 
 // Rate limiting constants
 const MIN_TIME_BETWEEN_REQUESTS = 60000; // 60 seconds minimum between requests
+
+// Logging utility
+function logToFile(message) {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] ${message}\n`;
+    fs.appendFileSync(LOG_FILE, logMessage);
+    console.log(logMessage.trim()); // Also log to console
+}
 
 // Function to save image data
 function saveImageData() {
@@ -246,6 +264,58 @@ app.get('/generate-npc-image', async (req, res) => {
         } else {
             res.status(500).json({ error: 'Failed to generate image', details: error.message });
         }
+    }
+});
+
+// Route to handle text-to-speech
+app.post('/speak', async (req, res) => {
+    const { text } = req.body;
+    
+    try {
+        logToFile(`Generating speech for text: ${text}`);
+        
+        // Generate audio using ElevenLabs API directly
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'audio/mpeg',
+                'Content-Type': 'application/json',
+                'xi-api-key': process.env.ELEVENLABS_API_KEY
+            },
+            body: JSON.stringify({
+                text: text,
+                model_id: "eleven_multilingual_v2",
+                voice_settings: {
+                    stability: 0.52,
+                    similarity_boost: 0.85,
+                    style: 0.0,
+                    use_speaker_boost: true
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            logToFile(`ElevenLabs API error: ${JSON.stringify(errorData)}`);
+            throw new Error(`ElevenLabs API error: ${JSON.stringify(errorData)}`);
+        }
+
+        // Get the audio buffer
+        const audioBuffer = await response.buffer();
+        logToFile(`Successfully generated speech, buffer size: ${audioBuffer.length} bytes`);
+
+        // Set appropriate headers
+        res.set({
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': audioBuffer.length
+        });
+
+        // Send the audio buffer
+        res.send(audioBuffer);
+    } catch (error) {
+        console.error('Error generating speech:', error);
+        logToFile(`Error generating speech: ${error.message}`);
+        res.status(500).json({ error: 'Failed to generate speech', details: error.message });
     }
 });
 
