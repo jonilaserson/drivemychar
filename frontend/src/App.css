@@ -1,0 +1,273 @@
+.App {
+  text-align: center;
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 15px 20px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(10px + 1vmin);
+  color: white;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mode-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  padding: 10px 20px;
+  background-color: #4a5568;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mode-toggle:hover {
+  background-color: #2d3748;
+}
+
+.gm-interface, .player-interface {
+  margin-top: 60px;
+}
+
+.context-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  text-align: left;
+  background-color: #f7fafc;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-group label {
+  font-weight: bold;
+  color: #2d3748;
+}
+
+.form-group input,
+.form-group textarea {
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-size: 16px;
+}
+
+.form-group textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.dialogue-container {
+  margin: 20px 0;
+  min-height: 200px;
+  max-height: 500px;
+  overflow-y: auto;
+  background-color: #f7fafc;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.message {
+  margin: 10px 0;
+  padding: 10px;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.message.user {
+  background-color: #ebf8ff;
+  margin-left: 20%;
+}
+
+.message.assistant {
+  background-color: #f0fff4;
+  margin-right: 20%;
+}
+
+.message h3 {
+  margin: 0 0 5px 0;
+  color: #2d3748;
+  font-size: 0.9em;
+}
+
+.message p {
+  margin: 0;
+  color: #4a5568;
+}
+
+.controls {
+  margin: 10px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.clear-history {
+  background-color: #e53e3e;
+  color: white;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.clear-history:hover {
+  background-color: #c53030;
+}
+
+.npc-response {
+  text-align: left;
+  margin: 20px 0;
+}
+
+.npc-response h2 {
+  color: #2d3748;
+  margin-bottom: 10px;
+}
+
+.input-form {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.input-form input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-size: 16px;
+}
+
+button {
+  padding: 10px 20px;
+  background-color: #4299e1;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+button:hover {
+  background-color: #3182ce;
+}
+
+@media (max-width: 600px) {
+  .App {
+    padding: 10px;
+  }
+  
+  .mode-toggle {
+    position: static;
+    margin-bottom: 20px;
+  }
+  
+  .input-form {
+    flex-direction: column;
+  }
+}
+
+.npc-profile {
+  display: flex;
+  align-items: flex-start;
+  gap: 2rem;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  margin: 1rem;
+}
+
+.npc-image {
+  flex: 0 0 300px;
+}
+
+.npc-image img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.npc-info {
+  flex: 1;
+}
+
+.npc-info h2 {
+  margin-top: 0;
+  color: #ffd700;
+}
+
+.npc-info p {
+  margin: 0.5rem 0;
+  line-height: 1.5;
+}
+
+.image-error {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: rgba(255, 0, 0, 0.1);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 4px;
+  color: #ff4444;
+  font-size: 0.9em;
+}
+
+.image-error p {
+  margin: 5px 0;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.generate-image-btn {
+  background-color: #6b46c1;
+}
+
+.generate-image-btn:hover {
+  background-color: #553c9a;
+}
