@@ -31,7 +31,9 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.env
 .env.local
+.env.development
 .env.development.local
 .env.test.local
 .env.production.local
@@ -49,7 +51,8 @@ Thumbs.db
 # Project specific
 npc-dialogue-app/backend/logs/
 *.log
+npc-dialogue-app/backend/.env
+npc-dialogue-app/backend/data/
 
 # Virtual environments
 .venv
-npc-dialogue-app/backend/.env
