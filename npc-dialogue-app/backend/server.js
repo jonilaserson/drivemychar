@@ -5,6 +5,9 @@ const OpenAI = require('openai');
 const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
+const { formatPrompt } = require('./utils/promptFormatter');
+const { checkRateLimit } = require('./utils/rateLimiter');
+const { logRequest, logError, logInfo } = require('./utils/logger');
 
 const app = express();
 
@@ -41,7 +44,13 @@ app.use((req, res, next) => {
 });
 
 // Serve static files from the images directory
-app.use('/images', express.static(path.join(__dirname, 'images')));
+app.use('/images', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  console.log(`[STATIC] Serving image: ${req.url}`);
+  next();
+}, express.static(path.join(__dirname, 'images')));
 
 // Set up logging
 const LOG_DIR = path.join(__dirname, 'logs');
@@ -97,20 +106,6 @@ function logToFile(message) {
     console.log(logMessage.trim());
 }
 
-// Function to format prompt with NPC data
-function formatPrompt(npcData) {
-    // Use the system prompt template from npc-config.json
-    const npcPrompt = npcConfig.systemPrompt.template
-        .replace('{name}', npcData.name)
-        .replace('{description}', npcData.description)
-        .replace('{personality}', npcData.personality)
-        .replace('{currentScene}', npcData.currentScene)
-        .replace('{gameContext}', npcData.gameContext);
-
-    // Then append the common formatting instructions
-    return `${npcPrompt}\n\n${promptConfig.promptFormat.instructions}`;
-}
-
 // Function to get voice settings with defaults from config
 function getVoiceSettings(npcVoice) {
     const defaultSettings = npcConfig.providers.voice.elevenlabs.defaultSettings;
@@ -132,23 +127,13 @@ const IMAGE_CACHE = {};
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = 5;
 const rateLimitMap = new Map();
+const SSE_CLIENTS = new Map(); // Map to track SSE clients by npcId
 
-// Add this function to check rate limits
-function checkRateLimit(npcId) {
-    const now = Date.now();
-    const userRequests = rateLimitMap.get(npcId) || [];
-    
-    // Remove requests older than the window
-    const recentRequests = userRequests.filter(time => now - time < RATE_LIMIT_WINDOW);
-    
-    if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
-        return false;
-    }
-    
-    recentRequests.push(now);
-    rateLimitMap.set(npcId, recentRequests);
-    return true;
-}
+// Add middleware to fix SSE for proxies if needed
+app.use((req, res, next) => {
+  res.flush = () => {};
+  next();
+});
 
 // Route to get available NPCs
 app.get('/npcs', (req, res) => {
@@ -160,127 +145,344 @@ app.get('/npcs', (req, res) => {
     res.json(npcList);
 });
 
-// Route to get specific NPC context
-app.get('/context/:npcId', async (req, res) => {
-    const npcId = req.params.npcId;
-    try {
-        const npc = loadNpcData(npcId);
-        if (!npc) {
-            return res.status(404).json({ error: 'NPC not found' });
-        }
+// Session management
+const SESSIONS_DIR = path.join(__dirname, 'data', 'sessions');
+const sessionCache = new Map();
 
-        const localImagePath = `/images/${npc.id}.png`;
-        console.log(`[CONTEXT] Setting localImagePath for ${npc.id} to: ${localImagePath}`);
-        
-        // Check if local image exists
-        const imagePath = path.join(__dirname, 'images', `${npc.id}.png`);
-        const hasLocalImage = fs.existsSync(imagePath);
-        console.log(`[CONTEXT] Local image ${hasLocalImage ? 'exists' : 'does not exist'} at: ${imagePath}`);
-        
-        res.json({
-            ...npc,
-            localImagePath: hasLocalImage ? localImagePath : null
-        });
-    } catch (error) {
-        console.error('Error loading NPC context:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+// Ensure sessions directory exists
+if (!fs.existsSync(SESSIONS_DIR)) {
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+}
+
+function getOrCreateSession(npcId) {
+  // Check cache first
+  if (sessionCache.has(npcId)) {
+    return sessionCache.get(npcId);
+  }
+  
+  // Load from disk if not in cache
+  const sessionPath = path.join(SESSIONS_DIR, `${npcId}.json`);
+  if (fs.existsSync(sessionPath)) {
+    const session = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+    sessionCache.set(npcId, session);
+    return session;
+  }
+  
+  // Create new session
+  const newSession = {
+    npcId,
+    sessionId: `${new Date().toISOString().split('T')[0]}-${npcId}-1`,
+    startedAt: new Date().toISOString(),
+    lastActive: new Date().toISOString(),
+    patience: 100,
+    messages: []
+  };
+  
+  sessionCache.set(npcId, newSession);
+  return newSession;
+}
+
+function updateSession(npcId, updates) {
+  const session = getOrCreateSession(npcId);
+  const updatedSession = {
+    ...session,
+    ...updates,
+    lastActive: new Date().toISOString()
+  };
+  
+  sessionCache.set(npcId, updatedSession);
+  return updatedSession;
+}
+
+// Save all sessions to disk
+function saveAllSessions() {
+  logInfo('Saving all sessions to disk...');
+  for (const [npcId, session] of sessionCache.entries()) {
+    const sessionPath = path.join(SESSIONS_DIR, `${npcId}.json`);
+    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
+  }
+  logInfo('All sessions saved successfully');
+}
+
+// Save sessions periodically (every 5 minutes)
+setInterval(saveAllSessions, 5 * 60 * 1000);
+
+// Save sessions on server shutdown
+process.on('SIGTERM', () => {
+  logInfo('Server shutting down, saving sessions...');
+  saveAllSessions();
+  process.exit(0);
 });
 
-// Route to update NPC context and save to JSON file
-app.post('/context/:npcId', (req, res) => {
-    const npcId = req.params.npcId;
-    const updatedContext = req.body;
-
-    // Validate request
-    if (!npcId || !updatedContext) {
-        return res.status(400).json({ error: 'Invalid request. NPC ID and updated context are required.' });
-    }
-
-    try {
-        // Check if NPC exists
-        if (!npcs[npcId]) {
-            return res.status(404).json({ error: 'NPC not found' });
-        }
-
-        // Update the NPC data in memory
-        npcs[npcId] = {
-            ...npcs[npcId],
-            ...updatedContext
-        };
-
-        // Save to JSON file
-        const filePath = path.join(NPCS_DIR, `${npcId}.json`);
-        fs.writeFileSync(filePath, JSON.stringify(npcs[npcId], null, 2));
-
-        console.log(`[UPDATE] Updated context for NPC ${npcId} saved to ${filePath}`);
-
-        // Return the updated NPC data with local image path
-        const localImagePath = `/images/${npcId}.png`;
-        const npcWithImage = {
-            ...npcs[npcId],
-            localImagePath
-        };
-
-        res.json(npcWithImage);
-    } catch (error) {
-        console.error(`[ERROR] Failed to update NPC ${npcId}:`, error);
-        res.status(500).json({ error: 'Failed to update NPC context' });
-    }
-});
-
-// Route to handle dialogue
-app.post('/dialogue/:npcId', async (req, res) => {
-    const npc = npcs[req.params.npcId];
+// Modified context endpoint - handle both paths
+app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const npc = npcs[npcId];
     if (!npc) {
-        return res.status(404).json({ error: 'NPC not found' });
+      return res.status(404).json({ error: 'NPC not found' });
     }
-
-    const playerInput = req.body.input;
     
-    try {
-        const systemPrompt = formatPrompt(npc);
-        const messages = [
-            { role: "system", content: systemPrompt }
-        ];
+    const session = getOrCreateSession(npcId);
+    logInfo(`Retrieved context for ${npcId}, session ${session.sessionId}`);
+    
+    const localImagePath = `/images/${npc.id}.png`;
+    console.log(`[CONTEXT] Setting localImagePath for ${npc.id} to: ${localImagePath}`);
+    
+    // Check if local image exists
+    const imagePath = path.join(__dirname, 'images', `${npc.id}.png`);
+    const hasLocalImage = fs.existsSync(imagePath);
+    console.log(`[CONTEXT] Local image ${hasLocalImage ? 'exists' : 'does not exist'} at: ${imagePath}`);
+    
+    res.json({
+      ...npc,
+      session: {
+        id: session.sessionId,
+        patience: session.patience,
+        lastUpdated: session.lastActive
+      },
+      localImagePath: hasLocalImage ? localImagePath : null,
+      conversationHistory: session.messages // Include server-side conversation history
+    });
+  } catch (error) {
+    logError('Error in context endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-        // Add conversation history if provided
-        if (req.body.conversationHistory) {
-            messages.push(...req.body.conversationHistory);
-        }
+// Endpoint for GM to adjust patience
+app.post('/api/npc/:npcId/patience', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const { adjustment } = req.body;
+    
+    const session = getOrCreateSession(npcId);
+    const updatedSession = updateSession(npcId, {
+      patience: session.patience + adjustment
+    });
+    
+    logInfo(`Adjusted patience for ${npcId} by ${adjustment}, new value: ${updatedSession.patience}`);
+    res.json({ 
+      success: true, 
+      patience: updatedSession.patience 
+    });
+  } catch (error) {
+    logError('Error adjusting patience:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-        // Add current input
-        if (playerInput) {
-            messages.push({ role: "user", content: playerInput });
-        }
-
-        logToFile(`GPT Prompt:\n${JSON.stringify(messages, null, 2)}`);
-
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4",
-            messages: messages,
-            max_tokens: 150,
-            temperature: 0.7
-        });
-
-        const npcResponse = completion.choices[0].message.content;
-        logToFile(`GPT Response:\n${npcResponse}`);
-
-        // Update conversation history
-        const updatedHistory = [...(req.body.conversationHistory || [])];
-        if (playerInput) {
-            updatedHistory.push({ role: "user", content: playerInput });
-        }
-        updatedHistory.push({ role: "assistant", content: npcResponse });
-
-        res.json({ 
-            response: npcResponse,
-            conversationHistory: updatedHistory
-        });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ error: 'Failed to generate response' });
+// New SSE endpoint for conversation updates
+app.get('/sse/conversation/:npcId', (req, res) => {
+  const { npcId } = req.params;
+  const clientId = req.query.client || 'unknown';
+  
+  logInfo(`SSE connection established for ${npcId} from client ${clientId}`);
+  
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no' // Disable buffering for nginx
+  });
+  
+  // Send initial heartbeat
+  res.write('event: connected\n');
+  res.write(`data: ${JSON.stringify({ status: 'connected', clientId })}\n\n`);
+  
+  // Send current conversation state
+  const session = getOrCreateSession(npcId);
+  sendConversationUpdate(res, session);
+  
+  // Add this client to the SSE clients map
+  if (!SSE_CLIENTS.has(npcId)) {
+    SSE_CLIENTS.set(npcId, new Map());
+  }
+  
+  const clientMap = SSE_CLIENTS.get(npcId);
+  const clientKey = `${clientId}_${Date.now()}`;
+  clientMap.set(clientKey, res);
+  
+  // Handle client disconnect
+  req.on('close', () => {
+    logInfo(`SSE connection closed for ${npcId} from client ${clientId}`);
+    if (SSE_CLIENTS.has(npcId)) {
+      const clients = SSE_CLIENTS.get(npcId);
+      clients.delete(clientKey);
+      if (clients.size === 0) {
+        SSE_CLIENTS.delete(npcId);
+      }
     }
+  });
+  
+  // Setup periodic heartbeat to keep connection alive
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write('event: heartbeat\n');
+      res.write(`data: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
+    } catch (error) {
+      logError('Error sending heartbeat:', error);
+      clearInterval(heartbeatInterval);
+    }
+  }, 30000); // Every 30 seconds
+  
+  // Clear interval on disconnect
+  req.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
+});
+
+// Function to send conversation update to all connected clients
+function sendConversationUpdate(res, session) {
+  try {
+    const data = {
+      conversationHistory: session.messages || [],
+      lastUpdated: session.lastActive,
+      messageCount: session.messages ? session.messages.length : 0
+    };
+    
+    const eventData = JSON.stringify(data);
+    logInfo(`Sending update event with ${data.messageCount} messages`);
+    
+    res.write('event: update\n');
+    res.write(`data: ${eventData}\n\n`);
+  } catch (error) {
+    logError('Error sending conversation update:', error);
+  }
+}
+
+// Function to broadcast conversation update to all clients for an NPC
+function broadcastConversationUpdate(npcId) {
+  if (!SSE_CLIENTS.has(npcId)) return;
+  
+  const session = getOrCreateSession(npcId);
+  const clients = SSE_CLIENTS.get(npcId);
+  
+  logInfo(`Broadcasting update to ${clients.size} clients for ${npcId}`);
+  
+  for (const res of clients.values()) {
+    sendConversationUpdate(res, session);
+  }
+}
+
+// Modified chat endpoint to save messages and broadcast updates
+app.post('/chat/:npcId', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const { input, conversationHistory, clientId = 'unknown' } = req.body;
+    
+    logInfo(`Chat request from client ${clientId} for ${npcId}`);
+    
+    // Rate limiting check
+    const rateLimitResult = checkRateLimit(npcId);
+    if (!rateLimitResult.allowed) {
+      return res.status(429).json({ 
+        error: 'Rate limit exceeded',
+        retryAfter: rateLimitResult.retryAfter
+      });
+    }
+    
+    const session = getOrCreateSession(npcId);
+    const userMessage = { role: "user", content: input };
+    
+    const npc = npcs[npcId];
+    if (!npc) {
+      return res.status(404).json({ error: 'NPC not found' });
+    }
+
+    const systemPrompt = formatPrompt(npc);
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...conversationHistory,
+      userMessage
+    ];
+
+    logToFile(`GPT Prompt:\n${JSON.stringify(messages, null, 2)}`);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: messages,
+      max_tokens: 150,
+      temperature: 0.7
+    });
+
+    const npcResponse = completion.choices[0].message.content;
+    logToFile(`GPT Response:\n${npcResponse}`);
+
+    // Update conversation history
+    const updatedHistory = [...conversationHistory, userMessage, { role: "assistant", content: npcResponse }];
+    
+    // Save the updated conversation history in session
+    updateSession(npcId, {
+      messages: updatedHistory,
+      lastClientId: clientId
+    });
+
+    logInfo(`Chat completed for ${npcId}, new message count: ${updatedHistory.length}`);
+
+    // Broadcast the update to all connected clients
+    broadcastConversationUpdate(npcId);
+    
+    res.json({ 
+      response: npcResponse,
+      conversationHistory: updatedHistory
+    });
+  } catch (error) {
+    logError('Error in chat endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// We don't need the old polling endpoint anymore, but I'll keep it for backward compatibility
+// with reduced functionality
+app.get('/conversation/:npcId', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const clientId = req.query.client || 'unknown';
+    const session = getOrCreateSession(npcId);
+    
+    // Set cache control headers to encourage using SSE instead
+    res.set({
+      'Cache-Control': 'private, max-age=60',
+      'X-Use-SSE': 'Please switch to /sse/conversation endpoint for real-time updates'
+    });
+    
+    logInfo(`Legacy conversation request from client ${clientId} for ${npcId} - consider using SSE`);
+    
+    res.json({
+      conversationHistory: session.messages,
+      lastUpdated: session.lastActive,
+      messageCount: session.messages.length,
+      useSse: true
+    });
+  } catch (error) {
+    logError('Error getting conversation:', error);
+    res.status(500).json({ error: 'Failed to get conversation history' });
+  }
+});
+
+// Add endpoint to clear conversation history
+app.post('/clear-history/:npcId', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const clientId = req.query.client || 'unknown';
+    
+    logInfo(`Clear history request for ${npcId} from client ${clientId}`);
+    
+    // Update session with empty messages array
+    updateSession(npcId, {
+      messages: []
+    });
+    
+    // Broadcast the update to all connected clients
+    broadcastConversationUpdate(npcId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    logError('Error clearing history:', error);
+    res.status(500).json({ error: 'Failed to clear conversation history' });
+  }
 });
 
 // Route to handle text-to-speech
@@ -404,7 +606,9 @@ app.post('/generate-image/:npcId', async (req, res) => {
   }
 });
 
-const port = 3000;
-app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Access the server at http://localhost:${PORT} or http://<your-ip-address>:${PORT}`);
 });

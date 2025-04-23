@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-// Use the current host's IP address for the backend URL
-const BACKEND_URL = window.location.hostname === 'localhost' 
+// Use the local network IP address for the backend URL
+const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://localhost:3000'
-  : `http://${window.location.hostname}:3000`;
+  : 'http://10.100.102.15:3000';  // Your computer's actual IP address
+
+// Add a unique client ID to identify this instance in logs
+const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
+
+// Add a console log to help debug the URL being used
+console.log('Using backend URL:', BACKEND_URL);
+console.log('Client ID:', CLIENT_ID);
 
 function App() {
   const [npcs, setNpcs] = useState([]);
@@ -17,6 +24,8 @@ function App() {
   const [retryAfter, setRetryAfter] = useState(null);
   const [conversationHistory, setConversationHistory] = useState([]);
   const conversationHistories = useRef({});  // Store histories by NPC ID
+  const [lastUpdated, setLastUpdated] = useState(null); // Track last conversation update
+  const sseSourceRef = useRef(null); // Reference to SSE connection
   const imageCache = useRef({});
   const imageGenerationTimeout = useRef(null);
   const loadedNpcs = useRef(new Set());  // Track which NPCs we've loaded
@@ -56,22 +65,31 @@ function App() {
   // Function to load and set an image from a URL
   const loadAndSetImage = async (imageUrl, fallbackUrl = null) => {
     try {
-      const response = await fetch(imageUrl);
-      if (response.ok) {
-        const blob = await response.blob();
-        if (blob.size > 0) {
+      // Create a new image element to test the URL
+      const img = new Image();
+      img.src = imageUrl;
+      
+      // Return a promise that resolves when the image loads or fails
+      return new Promise((resolve) => {
+        img.onload = () => {
           setNpcImage(imageUrl);
           setImageError(null);
-          return true;
-        }
-      }
-      if (fallbackUrl) {
-        console.log('[IMAGE] Primary image not available, using fallback URL');
-        setNpcImage(fallbackUrl);
-        setImageError(null);
-        return true;
-      }
-      return false;
+          resolve(true);
+        };
+        
+        img.onerror = () => {
+          if (fallbackUrl) {
+            console.log('[IMAGE] Primary image not available, using fallback URL');
+            setNpcImage(fallbackUrl);
+            setImageError(null);
+            resolve(true);
+          } else {
+            console.error('[IMAGE] Failed to load image:', imageUrl);
+            setImageError('Image not available');
+            resolve(false);
+          }
+        };
+      });
     } catch (error) {
       console.error('[IMAGE] Error loading image:', error);
       if (fallbackUrl) {
@@ -265,6 +283,95 @@ function App() {
     loadNpcs();
   }, [npcs.length]); // Only re-run if npcs.length changes
 
+  // Function to fetch initial conversation data
+  const fetchInitialConversation = async (npcId) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/conversation/${npcId}?client=${CLIENT_ID}`);
+      
+      if (!response.ok) {
+        console.error('Error fetching initial conversation:', response.statusText);
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (data.conversationHistory && data.conversationHistory.length > 0) {
+        console.log(`Loaded initial conversation data (${data.messageCount} messages)`);
+        setConversationHistory(data.conversationHistory);
+        conversationHistories.current[npcId] = data.conversationHistory;
+        setLastUpdated(data.lastUpdated);
+      }
+    } catch (error) {
+      console.error('Error fetching initial conversation:', error);
+    }
+  };
+
+  // Setup SSE connection when NPC is selected
+  useEffect(() => {
+    if (!selectedNpcId) return;
+    
+    console.log(`Setting up SSE connection for ${selectedNpcId}`);
+    
+    // Close any existing SSE connection
+    if (sseSourceRef.current) {
+      console.log('Closing previous SSE connection');
+      sseSourceRef.current.close();
+      sseSourceRef.current = null;
+    }
+    
+    // Create a new SSE connection
+    const timestamp = Date.now(); // Add timestamp to prevent caching
+    const eventSource = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}&t=${timestamp}`);
+    sseSourceRef.current = eventSource;
+    
+    // Listen for connection open
+    eventSource.addEventListener('connected', (event) => {
+      const data = JSON.parse(event.data);
+      console.log('SSE connection established:', data);
+    });
+    
+    // Listen for conversation updates
+    eventSource.addEventListener('update', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log(`Received conversation update (${data.messageCount || 0} messages)`);
+        
+        // Always update the conversation history, even if empty
+        console.log('Updating conversation history:', data.conversationHistory);
+        setConversationHistory(data.conversationHistory || []);
+        conversationHistories.current[selectedNpcId] = data.conversationHistory || [];
+        setLastUpdated(data.lastUpdated);
+      } catch (error) {
+        console.error('Error processing SSE update:', error);
+      }
+    });
+    
+    // Listen for heartbeat
+    eventSource.addEventListener('heartbeat', () => {
+      console.log('SSE heartbeat received');
+    });
+    
+    // Handle errors
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      // Try to reconnect after 5 seconds if connection fails
+      if (eventSource.readyState === EventSource.CLOSED) {
+        setTimeout(() => {
+          console.log('Attempting to reconnect SSE...');
+          eventSource.close();
+          sseSourceRef.current = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}`);
+        }, 5000);
+      }
+    };
+    
+    // Cleanup on unmount or when NPC changes
+    return () => {
+      console.log('Closing SSE connection due to unmount or NPC change');
+      eventSource.close();
+      sseSourceRef.current = null;
+    };
+  }, [selectedNpcId]);
+
   // Load NPC context when selected NPC changes
   useEffect(() => {
     const loadSelectedNpc = async () => {
@@ -278,12 +385,22 @@ function App() {
         setSelectedNpc(data);
         setNpcContext(data);
         
-        // Reset conversation history for this NPC if we haven't loaded it before
-        if (!loadedNpcs.current.has(selectedNpcId)) {
-            conversationHistories.current[selectedNpcId] = [];
-            loadedNpcs.current.add(selectedNpcId);
+        // Use server-side conversation history if available
+        if (data.conversationHistory && data.conversationHistory.length > 0) {
+          console.log('Using server-side conversation history');
+          setConversationHistory(data.conversationHistory);
+          conversationHistories.current[selectedNpcId] = data.conversationHistory;
+          if (data.session && data.session.lastUpdated) {
+            setLastUpdated(data.session.lastUpdated);
+          }
+        } else {
+          // Reset conversation history for this NPC if no server history
+          if (!loadedNpcs.current.has(selectedNpcId)) {
+              conversationHistories.current[selectedNpcId] = [];
+              loadedNpcs.current.add(selectedNpcId);
+          }
+          setConversationHistory(conversationHistories.current[selectedNpcId] || []);
         }
-        setConversationHistory(conversationHistories.current[selectedNpcId] || []);
         
         // Reset image state
         setNpcImage(null);
@@ -333,14 +450,15 @@ function App() {
     setError(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/dialogue/${selectedNpc.id}`, {
+      const response = await fetch(`${BACKEND_URL}/chat/${selectedNpc.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           input: playerInput.trim(),
-          conversationHistory
+          conversationHistory,
+          clientId: CLIENT_ID
         }),
       });
 
@@ -350,7 +468,8 @@ function App() {
         throw new Error(data.error);
       }
 
-      // Update both the current conversation history and the stored history
+      // The server will broadcast the update via SSE
+      // but we'll also update locally for immediate feedback
       setConversationHistory(data.conversationHistory);
       conversationHistories.current[selectedNpc.id] = data.conversationHistory;
       
@@ -368,17 +487,66 @@ function App() {
   };
 
   const handleClearHistory = async () => {
-    const response = await fetch('http://localhost:3000/clear-history', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    if (!selectedNpc) return;
+    
+    try {
+      console.log('Clearing conversation history for', selectedNpc.id);
+      
+      // 1. Close any existing SSE connection to ensure we get a fresh one after clearing
+      if (sseSourceRef.current) {
+        console.log('Closing SSE connection before clearing history');
+        sseSourceRef.current.close();
+        sseSourceRef.current = null;
       }
-    });
-    if (response.ok) {
+      
+      // 2. Update local state immediately for responsive UI
       setConversationHistory([]);
-      if (selectedNpc) {
-        conversationHistories.current[selectedNpc.id] = [];
+      conversationHistories.current[selectedNpc.id] = [];
+      
+      // 3. Send clear request to server
+      const response = await fetch(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear conversation history');
       }
+      
+      // 4. Reload the context and conversation just to be sure
+      const contextResponse = await fetch(`${BACKEND_URL}/context/${selectedNpc.id}`);
+      const contextData = await contextResponse.json();
+      
+      if (contextData.conversationHistory) {
+        // This should be empty now
+        setConversationHistory(contextData.conversationHistory);
+        conversationHistories.current[selectedNpc.id] = contextData.conversationHistory;
+      }
+      
+      // 5. Force a new SSE connection to get fresh updates
+      const timestamp = Date.now();
+      sseSourceRef.current = new EventSource(
+        `${BACKEND_URL}/sse/conversation/${selectedNpc.id}?client=${CLIENT_ID}&t=${timestamp}`
+      );
+      
+      // Set up event listeners again
+      sseSourceRef.current.addEventListener('update', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log(`Fresh SSE: Received conversation update (${data.messageCount || 0} messages)`);
+          setConversationHistory(data.conversationHistory || []);
+          conversationHistories.current[selectedNpc.id] = data.conversationHistory || [];
+        } catch (error) {
+          console.error('Error processing SSE update after clear:', error);
+        }
+      });
+      
+      console.log('Conversation history cleared successfully');
+    } catch (err) {
+      console.error('Error clearing conversation history:', err);
+      setError('Failed to clear conversation history');
     }
   };
 
