@@ -50,6 +50,7 @@ function App() {
   const [showImageModal, setShowImageModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
 
   // Function to speak text using ElevenLabs
   const speakText = async (text) => {
@@ -230,6 +231,7 @@ function App() {
       
       try {
         setIsLoadingContext(true);
+        setIsLoadingImage(true);
         const response = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
         const data = await response.json();
         setSelectedNpc(data);
@@ -242,33 +244,44 @@ function App() {
         }
         setConversationHistory(conversationHistories.current[selectedNpcId] || []);
         
-        // Handle image loading with fallback to URL
+        // Reset image state
+        setNpcImage(null);
+        setImageError(null);
+        
+        // Try loading local image first
         if (data.localImagePath) {
             const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
             try {
                 const imgResponse = await fetch(fullImageUrl);
                 if (imgResponse.ok) {
-                    setNpcImage(fullImageUrl);
-                } else if (data.url) {
-                    console.log('[IMAGE] Local image not found, using URL fallback:', data.url);
-                    setNpcImage(data.url);
+                    const blob = await imgResponse.blob();
+                    if (blob.size > 0) {
+                        setNpcImage(fullImageUrl);
+                    } else {
+                        console.log('[IMAGE] Image file is empty, falling back to URL');
+                        if (data.url) setNpcImage(data.url);
+                    }
+                } else {
+                    console.log('[IMAGE] Local image not found, falling back to URL');
+                    if (data.url) setNpcImage(data.url);
                 }
             } catch (error) {
-                if (data.url) {
-                    console.log('[IMAGE] Error loading local image, using URL fallback:', data.url);
-                    setNpcImage(data.url);
-                }
+                console.log('[IMAGE] Error loading local image, falling back to URL:', error);
+                if (data.url) setNpcImage(data.url);
             }
         } else if (data.url) {
-            console.log('[IMAGE] No local image path, using URL:', data.url);
+            // No local image, use URL directly
+            console.log('[IMAGE] No local image, using URL:', data.url);
             setNpcImage(data.url);
         }
         
         setIsLoadingContext(false);
+        setIsLoadingImage(false);
       } catch (err) {
         console.error('Error loading NPC context:', err);
         setError('Failed to load NPC context');
         setIsLoadingContext(false);
+        setIsLoadingImage(false);
       }
     };
 
@@ -407,13 +420,27 @@ function App() {
       }
 
       const data = await response.json();
-      // Force image reload by adding a timestamp
-      const timestamp = new Date().getTime();
-      setSelectedNpc(prev => ({
-        ...prev,
-        localImagePath: `${data.localImagePath}?t=${timestamp}`
-      }));
-      setImageError(null);
+      
+      // Load the new image immediately
+      const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
+      try {
+        const imgResponse = await fetch(fullImageUrl);
+        if (imgResponse.ok) {
+          const blob = await imgResponse.blob();
+          if (blob.size > 0) {
+            // Force image reload by adding a timestamp
+            setNpcImage(`${fullImageUrl}?t=${new Date().getTime()}`);
+            setImageError(null);
+          } else {
+            setImageError('Generated image is empty');
+          }
+        } else {
+          setImageError('Failed to load generated image');
+        }
+      } catch (error) {
+        console.error('Error loading generated image:', error);
+        setImageError('Failed to load generated image');
+      }
     } catch (error) {
       console.error('Error generating image:', error);
       setImageError('Failed to generate image');
@@ -469,21 +496,29 @@ function App() {
         <div className="npc-profile">
           <div className="npc-image">
             <div className="npc-image-container">
-              {npcImage ? (
-                <img
-                  className="npc-image"
-                  src={npcImage}
-                  alt={selectedNpc.name}
-                  onClick={() => setShowImageModal(true)}
-                />
+              {isLoadingImage ? (
+                <div className="loading-image">Loading image...</div>
               ) : (
-                <button
-                  className="generate-image-button"
-                  onClick={generateNpcImage}
-                  disabled={loading}
-                >
-                  Generate Image
-                </button>
+                <>
+                  {npcImage && (
+                    <img
+                      className="npc-image"
+                      src={npcImage}
+                      alt={selectedNpc.name}
+                      onClick={() => setShowImageModal(true)}
+                    />
+                  )}
+                  {isGMMode && (
+                    <button
+                      className="generate-image-button"
+                      onClick={generateNpcImage}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? 'Generating...' : 'Generate Image'}
+                    </button>
+                  )}
+                  {imageError && <div className="image-error">{imageError}</div>}
+                </>
               )}
             </div>
             {isGMMode ? (
@@ -502,14 +537,24 @@ function App() {
         </div>
       )}
 
-      {showImageModal && selectedNpc && (selectedNpc.localImagePath || selectedNpc.url) && (
-        <div className="image-modal" onClick={() => setShowImageModal(false)}>
-          <img
-            className="modal-image"
-            src={npcImage}
-            alt={selectedNpc.name}
-          />
-        </div>
+      {/* Image Modal */}
+      {showImageModal && npcImage && (
+          <div className="modal-overlay" onClick={() => setShowImageModal(false)}>
+              <div className="modal-content" onClick={e => e.stopPropagation()}>
+                  <button 
+                      className="close-modal" 
+                      onClick={() => setShowImageModal(false)}
+                      aria-label="Close modal"
+                  >
+                      ×
+                  </button>
+                  <img
+                      className="modal-image"
+                      src={npcImage}
+                      alt={selectedNpc?.name || 'NPC'}
+                  />
+              </div>
+          </div>
       )}
 
       {isGMMode ? (
