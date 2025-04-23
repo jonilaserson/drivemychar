@@ -103,39 +103,44 @@ function App() {
 
   // Initialize speech recognition
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window) {
-      const recognition = new window.webkitSpeechRecognition();
+    // Check for both standard and webkit prefixed version
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = 'en-US';
 
       recognition.onstart = () => {
+        console.log('Speech recognition started');
         setIsListening(true);
+        setShowProgress(false); // Reset progress when starting new recognition
       };
 
       recognition.onend = () => {
+        console.log('Speech recognition ended');
         setIsListening(false);
       };
 
-      recognition.onresult = async (event) => {
+      recognition.onresult = (event) => {
+        console.log('Speech recognition result received');
         const transcript = event.results[0][0].transcript;
         setPlayerInput(transcript);
-        setShowProgress(true);
         
         // Clear any existing timeout
         if (autoSubmitTimeout.current) {
           clearTimeout(autoSubmitTimeout.current);
         }
 
-        // Start 3-second countdown for auto-submit
+        // Start auto-submit countdown
+        setShowProgress(true);
         autoSubmitTimeout.current = setTimeout(() => {
-          if (inputRef.current === document.activeElement) {
-            // User is editing, don't auto-submit
-            setShowProgress(false);
-          } else {
-            handleSubmit(new Event('submit'));
-            setShowProgress(false);
-          }
+          console.log('Auto-submitting transcript:', transcript);
+          setShowProgress(false);
+          // Create a synthetic event for handleSubmit
+          const syntheticEvent = { preventDefault: () => {} };
+          handleSubmit(syntheticEvent);
         }, 3000);
       };
 
@@ -143,20 +148,51 @@ function App() {
         console.error('Speech recognition error:', event.error);
         setIsListening(false);
         setShowProgress(false);
+        if (event.error === 'not-allowed') {
+          alert('Please enable microphone access to use voice input.');
+        }
       };
 
       setRecognition(recognition);
+    } else {
+      console.log('Speech recognition not supported');
+      // Disable the microphone button if speech recognition is not supported
+      setIsSpeechEnabled(false);
     }
-  }, []);
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
+    // Cleanup function
     return () => {
       if (autoSubmitTimeout.current) {
         clearTimeout(autoSubmitTimeout.current);
       }
     };
-  }, []);
+  }, []); // Empty dependency array since we only want to initialize once
+
+  const startListening = () => {
+    if (recognition) {
+      try {
+        recognition.start();
+        console.log('Starting speech recognition');
+      } catch (error) {
+        console.error('Error starting speech recognition:', error);
+        // If recognition is already started, stop it and start again
+        if (error.name === 'InvalidStateError') {
+          recognition.stop();
+          setTimeout(() => recognition.start(), 100);
+        }
+      }
+    } else {
+      console.log('Speech recognition not available');
+      alert('Speech recognition is not supported in your browser.');
+    }
+  };
+
+  const stopListening = () => {
+    if (recognition) {
+      recognition.stop();
+      console.log('Stopping speech recognition');
+    }
+  };
 
   // Handle input focus/blur
   const handleInputFocus = () => {
@@ -355,18 +391,6 @@ function App() {
     }
   };
 
-  const startListening = () => {
-    if (recognition && !isListening) {
-      recognition.start();
-    }
-  };
-
-  const stopListening = () => {
-    if (recognition && isListening) {
-      recognition.stop();
-    }
-  };
-
   // Add effect to scroll to bottom when conversation history changes
   useEffect(() => {
     if (conversationRef.current) {
@@ -562,7 +586,7 @@ function App() {
               className={`voice-input-button ${isListening ? 'listening' : ''}`}
               onClick={isListening ? stopListening : startListening}
               title={isListening ? "Stop recording" : "Start recording"}
-            >
+              disabled={!recognition}>
               <svg viewBox="0 0 24 24">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5z"/>
                 <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
