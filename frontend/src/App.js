@@ -51,19 +51,64 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const audioCache = useRef({}); // Cache for audio blobs by NPC ID and text
+
+  // Function to load and set an image from a URL
+  const loadAndSetImage = async (imageUrl, fallbackUrl = null) => {
+    try {
+      const response = await fetch(imageUrl);
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size > 0) {
+          setNpcImage(imageUrl);
+          setImageError(null);
+          return true;
+        }
+      }
+      if (fallbackUrl) {
+        console.log('[IMAGE] Primary image not available, using fallback URL');
+        setNpcImage(fallbackUrl);
+        setImageError(null);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('[IMAGE] Error loading image:', error);
+      if (fallbackUrl) {
+        setNpcImage(fallbackUrl);
+        setImageError(null);
+        return true;
+      }
+      return false;
+    }
+  };
 
   // Function to speak text using ElevenLabs
-  const speakText = async (text) => {
+  const speakText = async (text, npcId = null) => {
     if (!isSpeechEnabled) return;
     
     try {
       setIsSpeaking(true);
-      console.log('Sending text to speech:', text);  // Debug log
       
-      // Get the current NPC ID from the context
-      const npcId = npcContext.id || 'eldrin'; // Default to 'eldrin' if not set
+      // Use provided npcId or fall back to current NPC
+      const currentNpcId = npcId || npcContext.id || 'eldrin';
       
-      const response = await fetch(`${BACKEND_URL}/speak/${npcId}`, {
+      // Check cache first
+      const cacheKey = `${currentNpcId}:${text}`;
+      if (audioCache.current[cacheKey]) {
+        console.log('Using cached audio');
+        const audio = new Audio(audioCache.current[cacheKey]);
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = (e) => {
+          console.error('Audio playback error:', e);
+          setIsSpeaking(false);
+        };
+        await audio.play();
+        return;
+      }
+
+      console.log('Fetching new audio from API');
+      const response = await fetch(`${BACKEND_URL}/speak/${currentNpcId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,28 +116,24 @@ function App() {
         body: JSON.stringify({ text })
       });
 
-      console.log('Speech API response status:', response.status);  // Debug log
-
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('Speech API error:', errorData);  // Debug log
         throw new Error(errorData.error || 'Failed to generate speech');
       }
 
-      // Create audio element and play the response
       const audioBlob = await response.blob();
-      console.log('Received audio blob size:', audioBlob.size);  // Debug log
-      
       const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
       
+      // Cache the audio URL
+      audioCache.current[cacheKey] = audioUrl;
+      
+      const audio = new Audio(audioUrl);
       audio.onended = () => {
         setIsSpeaking(false);
-        URL.revokeObjectURL(audioUrl);
       };
 
       audio.onerror = (e) => {
-        console.error('Audio playback error:', e);  // Debug log
+        console.error('Audio playback error:', e);
         setIsSpeaking(false);
       };
 
@@ -248,31 +289,15 @@ function App() {
         setNpcImage(null);
         setImageError(null);
         
-        // Try loading local image first
+        // Try loading local image first, fall back to URL if available
         if (data.localImagePath) {
-            const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
-            try {
-                const imgResponse = await fetch(fullImageUrl);
-                if (imgResponse.ok) {
-                    const blob = await imgResponse.blob();
-                    if (blob.size > 0) {
-                        setNpcImage(fullImageUrl);
-                    } else {
-                        console.log('[IMAGE] Image file is empty, falling back to URL');
-                        if (data.url) setNpcImage(data.url);
-                    }
-                } else {
-                    console.log('[IMAGE] Local image not found, falling back to URL');
-                    if (data.url) setNpcImage(data.url);
-                }
-            } catch (error) {
-                console.log('[IMAGE] Error loading local image, falling back to URL:', error);
-                if (data.url) setNpcImage(data.url);
-            }
+          const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
+          const success = await loadAndSetImage(fullImageUrl, data.url);
+          if (!success && !data.url) {
+            setImageError('Image not available');
+          }
         } else if (data.url) {
-            // No local image, use URL directly
-            console.log('[IMAGE] No local image, using URL:', data.url);
-            setNpcImage(data.url);
+          await loadAndSetImage(data.url);
         }
         
         setIsLoadingContext(false);
@@ -420,26 +445,12 @@ function App() {
       }
 
       const data = await response.json();
-      
-      // Load the new image immediately
       const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
-      try {
-        const imgResponse = await fetch(fullImageUrl);
-        if (imgResponse.ok) {
-          const blob = await imgResponse.blob();
-          if (blob.size > 0) {
-            // Force image reload by adding a timestamp
-            setNpcImage(`${fullImageUrl}?t=${new Date().getTime()}`);
-            setImageError(null);
-          } else {
-            setImageError('Generated image is empty');
-          }
-        } else {
-          setImageError('Failed to load generated image');
-        }
-      } catch (error) {
-        console.error('Error loading generated image:', error);
-        setImageError('Failed to load generated image');
+      
+      // Force cache invalidation with timestamp
+      const success = await loadAndSetImage(`${fullImageUrl}?t=${new Date().getTime()}`);
+      if (!success) {
+        setImageError('Generated image is not available');
       }
     } catch (error) {
       console.error('Error generating image:', error);
@@ -479,7 +490,7 @@ function App() {
                   checked={isSpeechEnabled}
                   onChange={(e) => setIsSpeechEnabled(e.target.checked)}
                 />
-                Enable Voice
+                Auto Voice
               </label>
               {isSpeaking && <span className="speaking-indicator">Speaking...</span>}
             </div>
@@ -627,7 +638,21 @@ function App() {
             </div>
             {conversationHistory.map((message, index) => (
               <div key={index} className={`message ${message.role}`}>
-                <h3>{message.role === 'user' ? 'You' : npcContext.name} says:</h3>
+                <div className="message-header">
+                  <h3>{message.role === 'user' ? 'You' : npcContext.name} says:</h3>
+                  {message.role === 'assistant' && (
+                    <button 
+                      className="speak-message-button"
+                      onClick={() => speakText(message.content)}
+                      disabled={isSpeaking}
+                      title="Play speech"
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                      </svg>
+                    </button>
+                  )}
+                </div>
                 <p>{message.content}</p>
               </div>
             ))}
