@@ -26,14 +26,15 @@ venv/
 ENV/
 .uv/
 
-# Node.js
+# Node
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Environment
 .env
 .env.local
-.env.development
 .env.development.local
 .env.test.local
 .env.production.local
@@ -59,3 +60,12 @@ npc-dialogue-app/backend/data/
 
 # NPC Images (large binary files)
 npc-dialogue-app/backend/images/
+
+# Unused directories
+npc-dialogue-app/frontend/
+
+# Test files
+npc-dialogue-app/backend/test-image.jpg
+
+# Data files that change frequently
+npc-dialogue-app/backend/data/image_data.json
