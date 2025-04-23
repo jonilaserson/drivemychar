@@ -424,7 +424,7 @@ function App() {
                 {npcImage ? (
                     <img 
                         src={npcImage} 
-                        alt={selectedNpc.name} 
+                        alt={selectedNpc?.name} 
                         className="npc-image"
                         onError={(e) => {
                             console.error('Failed to load image:', e);
@@ -448,14 +448,20 @@ function App() {
                 )}
             </div>
           </div>
-          <div className="npc-info">
-            <h2 className="npc-name">{npcContext.name}</h2>
-            <div className="npc-details">
-              <p><strong>Description:</strong> {npcContext.description}</p>
-              <p><strong>Personality:</strong> {npcContext.personality}</p>
-              <p><strong>Current Scene:</strong> {npcContext.currentScene}</p>
+          {isGMMode ? (
+            <div className="npc-info">
+              <h2 className="npc-name">{npcContext.name}</h2>
+              <div className="npc-details">
+                <p><strong>Description:</strong> {npcContext.description}</p>
+                <p><strong>Personality:</strong> {npcContext.personality}</p>
+                <p><strong>Current Scene:</strong> {npcContext.currentScene}</p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="npc-title">
+              <h2 className="npc-name">{npcContext.name}</h2>
+            </div>
+          )}
         </div>
       </div>
 
@@ -523,8 +529,7 @@ function App() {
         </div>
       ) : (
         <div className="player-interface">
-          <h1>NPC Dialogue</h1>
-          <div className="dialogue-container">
+          <div className="dialogue-container" ref={conversationRef}>
             {conversationHistory.map((message, index) => (
               <div key={index} className={`message ${message.role}`}>
                 <h3>{message.role === 'user' ? 'You' : npcContext.name} says:</h3>
