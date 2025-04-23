@@ -101,6 +101,13 @@ function formatPrompt(template, npcData) {
     return `${npcPrompt}\n\n${promptConfig.promptFormat.instructions}`;
 }
 
+// Function to format image prompt (without dialogue instructions)
+function formatImagePrompt(template, npcData) {
+    return template
+        .replace('{name}', npcData.name)
+        .replace('{description}', npcData.description);
+}
+
 // Add this near the top with other constants
 const IMAGE_CACHE = {};
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
@@ -266,23 +273,15 @@ const imageCache = {};
 app.post('/generate-image/:npcId', async (req, res) => {
   const { npcId } = req.params;
   
-  // Check if we have a cached image for this NPC
-  if (imageCache[npcId]) {
-    console.log(`[DALL-E CACHE] Using cached DALL-E image for: ${npcId}`);
-    console.log(`[DALL-E CACHE] Cached URL: ${imageCache[npcId]}`);
-    return res.json({ imageUrl: imageCache[npcId] });
-  }
-  
-  // If no cached image, generate a new one
   try {
     const npc = npcs[npcId];
     if (!npc) {
       return res.status(404).json({ error: 'NPC not found' });
     }
 
-    // Use formatPrompt to properly replace placeholders
+    // Use formatImagePrompt to properly replace placeholders without dialogue instructions
     const defaultPrompt = `Create a portrait of {name}: {description} Style: fantasy art, detailed, professional illustration`;
-    const prompt = npc.imagePrompt ? formatPrompt(npc.imagePrompt, npc) : formatPrompt(defaultPrompt, npc);
+    const prompt = npc.imagePrompt ? formatImagePrompt(npc.imagePrompt, npc) : formatImagePrompt(defaultPrompt, npc);
     console.log(`[${new Date().toISOString()}] DALL-E Prompt:`, prompt);
 
     const response = await openai.images.generate({
@@ -297,10 +296,27 @@ app.post('/generate-image/:npcId', async (req, res) => {
     const imageUrl = response.data[0].url;
     console.log(`[${new Date().toISOString()}] DALL-E Response URL:`, imageUrl);
     
-    // Cache the image URL
-    imageCache[npcId] = imageUrl;
+    // Download and save the image
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) throw new Error('Failed to download image');
     
-    res.json({ imageUrl });
+    const imageBuffer = await imageResponse.buffer();
+    const imagePath = path.join(__dirname, 'images', `${npcId}.png`);
+    
+    // Ensure the images directory exists
+    const imagesDir = path.join(__dirname, 'images');
+    if (!fs.existsSync(imagesDir)) {
+        fs.mkdirSync(imagesDir, { recursive: true });
+    }
+    
+    // Save the image, overwriting if it already exists
+    fs.writeFileSync(imagePath, imageBuffer);
+    console.log(`[${new Date().toISOString()}] Saved image to:`, imagePath);
+    
+    res.json({ 
+        imageUrl,
+        localImagePath: `/images/${npcId}.png`
+    });
   } catch (error) {
     console.error('Error generating image:', error);
     
