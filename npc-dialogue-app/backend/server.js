@@ -62,6 +62,7 @@ if (!fs.existsSync(CONFIG_DIR)) {
 
 // Load prompt format configuration
 const promptConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'prompt_format.json'), 'utf8'));
+const npcConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'npc-config.json'), 'utf8'));
 
 // Load NPCs
 const npcs = {};
@@ -79,6 +80,15 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
 
+// Function to load NPC data
+function loadNpcData(npcId) {
+    const npc = npcs[npcId];
+    if (!npc) {
+        return null;
+    }
+    return npc;
+}
+
 // Logging utility
 function logToFile(message) {
     const timestamp = new Date().toISOString();
@@ -88,9 +98,9 @@ function logToFile(message) {
 }
 
 // Function to format prompt with NPC data
-function formatPrompt(template, npcData) {
-    // First replace the NPC-specific variables
-    const npcPrompt = template
+function formatPrompt(npcData) {
+    // Use the system prompt template from npc-config.json
+    const npcPrompt = npcConfig.systemPrompt.template
         .replace('{name}', npcData.name)
         .replace('{description}', npcData.description)
         .replace('{personality}', npcData.personality)
@@ -99,6 +109,15 @@ function formatPrompt(template, npcData) {
 
     // Then append the common formatting instructions
     return `${npcPrompt}\n\n${promptConfig.promptFormat.instructions}`;
+}
+
+// Function to get voice settings with defaults from config
+function getVoiceSettings(npcVoice) {
+    const defaultSettings = npcConfig.providers.voice.elevenlabs.defaultSettings;
+    return {
+        ...defaultSettings,
+        ...npcVoice.settings
+    };
 }
 
 // Function to format image prompt (without dialogue instructions)
@@ -116,19 +135,19 @@ const rateLimitMap = new Map();
 
 // Add this function to check rate limits
 function checkRateLimit(npcId) {
-  const now = Date.now();
-  const userRequests = rateLimitMap.get(npcId) || [];
-  
-  // Remove requests older than the window
-  const recentRequests = userRequests.filter(time => now - time < RATE_LIMIT_WINDOW);
-  
-  if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
-    return false;
-  }
-  
-  recentRequests.push(now);
-  rateLimitMap.set(npcId, recentRequests);
-  return true;
+    const now = Date.now();
+    const userRequests = rateLimitMap.get(npcId) || [];
+    
+    // Remove requests older than the window
+    const recentRequests = userRequests.filter(time => now - time < RATE_LIMIT_WINDOW);
+    
+    if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
+        return false;
+    }
+    
+    recentRequests.push(now);
+    rateLimitMap.set(npcId, recentRequests);
+    return true;
 }
 
 // Route to get available NPCs
@@ -142,23 +161,72 @@ app.get('/npcs', (req, res) => {
 });
 
 // Route to get specific NPC context
-app.get('/context/:npcId', (req, res) => {
-    const npc = npcs[req.params.npcId];
-    if (!npc) {
-        return res.status(404).json({ error: 'NPC not found' });
+app.get('/context/:npcId', async (req, res) => {
+    const npcId = req.params.npcId;
+    try {
+        const npc = loadNpcData(npcId);
+        if (!npc) {
+            return res.status(404).json({ error: 'NPC not found' });
+        }
+
+        const localImagePath = `/images/${npc.id}.png`;
+        console.log(`[CONTEXT] Setting localImagePath for ${npc.id} to: ${localImagePath}`);
+        
+        // Check if local image exists
+        const imagePath = path.join(__dirname, 'images', `${npc.id}.png`);
+        const hasLocalImage = fs.existsSync(imagePath);
+        console.log(`[CONTEXT] Local image ${hasLocalImage ? 'exists' : 'does not exist'} at: ${imagePath}`);
+        
+        res.json({
+            ...npc,
+            localImagePath: hasLocalImage ? localImagePath : null
+        });
+    } catch (error) {
+        console.error('Error loading NPC context:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Route to update NPC context and save to JSON file
+app.post('/context/:npcId', (req, res) => {
+    const npcId = req.params.npcId;
+    const updatedContext = req.body;
+
+    // Validate request
+    if (!npcId || !updatedContext) {
+        return res.status(400).json({ error: 'Invalid request. NPC ID and updated context are required.' });
     }
 
-    // Add the local image path to the NPC data
-    const localImagePath = `/images/${npc.id}.png`;
-    console.log(`[CONTEXT] Setting localImagePath for ${npc.id} to: ${localImagePath}`);
-    console.log(`[CONTEXT] Full image path would be: ${path.join(__dirname, 'images', `${npc.id}.png`)}`);
-    
-    const npcWithImage = {
-        ...npc,
-        localImagePath
-    };
+    try {
+        // Check if NPC exists
+        if (!npcs[npcId]) {
+            return res.status(404).json({ error: 'NPC not found' });
+        }
 
-    res.json(npcWithImage);
+        // Update the NPC data in memory
+        npcs[npcId] = {
+            ...npcs[npcId],
+            ...updatedContext
+        };
+
+        // Save to JSON file
+        const filePath = path.join(NPCS_DIR, `${npcId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(npcs[npcId], null, 2));
+
+        console.log(`[UPDATE] Updated context for NPC ${npcId} saved to ${filePath}`);
+
+        // Return the updated NPC data with local image path
+        const localImagePath = `/images/${npcId}.png`;
+        const npcWithImage = {
+            ...npcs[npcId],
+            localImagePath
+        };
+
+        res.json(npcWithImage);
+    } catch (error) {
+        console.error(`[ERROR] Failed to update NPC ${npcId}:`, error);
+        res.status(500).json({ error: 'Failed to update NPC context' });
+    }
 });
 
 // Route to handle dialogue
@@ -171,7 +239,7 @@ app.post('/dialogue/:npcId', async (req, res) => {
     const playerInput = req.body.input;
     
     try {
-        const systemPrompt = formatPrompt(npc.systemPrompt, npc);
+        const systemPrompt = formatPrompt(npc);
         const messages = [
             { role: "system", content: systemPrompt }
         ];
@@ -229,6 +297,9 @@ app.post('/speak/:npcId', async (req, res) => {
         const cleanText = text.replace(/\[.*?\]/g, '').trim();
         logToFile(`Generating speech for text (after removing actions): ${cleanText}`);
         
+        // Use merged voice settings from config and NPC
+        const voiceSettings = getVoiceSettings(npc.voice);
+        
         // Generate audio using ElevenLabs API
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${npc.voice.voiceId}`, {
             method: 'POST',
@@ -240,7 +311,7 @@ app.post('/speak/:npcId', async (req, res) => {
             body: JSON.stringify({
                 text: cleanText,
                 model_id: "eleven_multilingual_v2",
-                voice_settings: npc.voice.settings
+                voice_settings: voiceSettings
             })
         });
 

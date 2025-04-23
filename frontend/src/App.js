@@ -49,6 +49,7 @@ function App() {
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   // Function to speak text using ElevenLabs
   const speakText = async (text) => {
@@ -228,32 +229,46 @@ function App() {
       if (!selectedNpcId) return;
       
       try {
+        setIsLoadingContext(true);
         const response = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
         const data = await response.json();
-        
-        // Set both states with the NPC data
         setSelectedNpc(data);
-        setNpcContext({
-          id: data.id,
-          name: data.name,
-          description: data.description,
-          personality: data.personality,
-          currentScene: data.currentScene,
-          gameContext: data.gameContext
-        });
+        setNpcContext(data);
         
-        // Load the conversation history for this NPC
+        // Reset conversation history for this NPC if we haven't loaded it before
+        if (!loadedNpcs.current.has(selectedNpcId)) {
+            conversationHistories.current[selectedNpcId] = [];
+            loadedNpcs.current.add(selectedNpcId);
+        }
         setConversationHistory(conversationHistories.current[selectedNpcId] || []);
         
-        // Always try to use the local image first
+        // Handle image loading with fallback to URL
         if (data.localImagePath) {
-          const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
-          console.log(`Attempting to load local image from: ${fullImageUrl}`);
-          setNpcImage(fullImageUrl);
+            const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
+            try {
+                const imgResponse = await fetch(fullImageUrl);
+                if (imgResponse.ok) {
+                    setNpcImage(fullImageUrl);
+                } else if (data.url) {
+                    console.log('[IMAGE] Local image not found, using URL fallback:', data.url);
+                    setNpcImage(data.url);
+                }
+            } catch (error) {
+                if (data.url) {
+                    console.log('[IMAGE] Error loading local image, using URL fallback:', data.url);
+                    setNpcImage(data.url);
+                }
+            }
+        } else if (data.url) {
+            console.log('[IMAGE] No local image path, using URL:', data.url);
+            setNpcImage(data.url);
         }
+        
+        setIsLoadingContext(false);
       } catch (err) {
         console.error('Error loading NPC context:', err);
         setError('Failed to load NPC context');
+        setIsLoadingContext(false);
       }
     };
 
@@ -331,22 +346,38 @@ function App() {
 
   const handleContextSubmit = async (e) => {
     e.preventDefault();
-    const response = await fetch('http://localhost:3000/update-context', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(npcContext),
-    });
-    const data = await response.json();
-    if (data.message) {
+    setIsLoadingContext(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/context/${npcContext.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(npcContext),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update NPC context');
+      }
+
+      const data = await response.json();
+      
+      // Update both the selected NPC and NPCs list with new data
+      setSelectedNpc(data);
+      setNpcs(prevNpcs => prevNpcs.map(npc => 
+        npc.id === data.id ? { ...npc, ...data } : npc
+      ));
+
       alert('NPC context updated successfully!');
-      setConversationHistory([]); // Clear conversation history when context is updated
-      
-      // Update placeholder image immediately
-      setNpcImage('/placeholder.png');
-      
-      // Don't automatically generate a new image - wait for explicit request
+    } catch (error) {
+      console.error('Error updating context:', error);
+      setError(error.message || 'Failed to update NPC context');
+      alert('Failed to update NPC context: ' + error.message);
+    } finally {
+      setIsLoadingContext(false);
     }
   };
 
@@ -438,36 +469,21 @@ function App() {
         <div className="npc-profile">
           <div className="npc-image">
             <div className="npc-image-container">
-              {selectedNpc.localImagePath ? (
-                <>
-                  <img
-                    src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
-                    alt={selectedNpc.name}
-                    className="clickable-image"
-                    onClick={() => setShowImageModal(true)}
-                  />
-                  {isGMMode && (
-                    <button 
-                      className="generate-image-button"
-                      onClick={generateNpcImage}
-                      disabled={isGenerating}
-                    >
-                      {isGenerating ? 'Generating...' : 'Generate new image'}
-                    </button>
-                  )}
-                </>
+              {npcImage ? (
+                <img
+                  className="npc-image"
+                  src={npcImage}
+                  alt={selectedNpc.name}
+                  onClick={() => setShowImageModal(true)}
+                />
               ) : (
-                <div className="no-image-placeholder">No image available</div>
-              )}
-              {imageError && (
-                <div className="image-error">
-                  {imageError}
-                  {retryAfter && (
-                    <div className="retry-message">
-                      Retrying in {retryAfter} seconds...
-                    </div>
-                  )}
-                </div>
+                <button
+                  className="generate-image-button"
+                  onClick={generateNpcImage}
+                  disabled={loading}
+                >
+                  Generate Image
+                </button>
               )}
             </div>
             {isGMMode ? (
@@ -486,15 +502,13 @@ function App() {
         </div>
       )}
 
-      {showImageModal && selectedNpc && selectedNpc.localImagePath && (
-        <div className="modal-overlay" onClick={() => setShowImageModal(false)}>
-          <div className="modal-content">
-            <img
-              src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
-              alt={selectedNpc.name}
-              className="modal-image"
-            />
-          </div>
+      {showImageModal && selectedNpc && (selectedNpc.localImagePath || selectedNpc.url) && (
+        <div className="image-modal" onClick={() => setShowImageModal(false)}>
+          <img
+            className="modal-image"
+            src={npcImage}
+            alt={selectedNpc.name}
+          />
         </div>
       )}
 
@@ -549,7 +563,12 @@ function App() {
               />
             </div>
             <div className="form-actions">
-              <button type="submit">Update NPC Context</button>
+              <button 
+                type="submit"
+                disabled={isLoadingContext}
+              >
+                {isLoadingContext ? 'Updating...' : 'Update NPC Context'}
+              </button>
             </div>
           </form>
         </div>
