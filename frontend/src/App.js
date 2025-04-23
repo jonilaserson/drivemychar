@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-// Add BACKEND_URL constant at the top of the file
-const BACKEND_URL = 'http://localhost:3000';
+// Use the current host's IP address for the backend URL
+const BACKEND_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:3000'
+  : `http://${window.location.hostname}:3000`;
 
 function App() {
   const [npcs, setNpcs] = useState([]);
@@ -46,6 +48,7 @@ function App() {
   const conversationRef = useRef(null);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // Function to speak text using ElevenLabs
   const speakText = async (text) => {
@@ -58,7 +61,7 @@ function App() {
       // Get the current NPC ID from the context
       const npcId = npcContext.id || 'eldrin'; // Default to 'eldrin' if not set
       
-      const response = await fetch(`http://localhost:3000/speak/${npcId}`, {
+      const response = await fetch(`${BACKEND_URL}/speak/${npcId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -312,58 +315,43 @@ function App() {
   };
 
   // Function to generate a new NPC image
-  const generateNpcImage = async (npcId, forceGenerate = false) => {
-    // Clear any existing timeout
-    if (imageGenerationTimeout.current) {
-        clearTimeout(imageGenerationTimeout.current);
-    }
-
-    // Clear any existing errors
-    setImageError(null);
-    setRetryAfter(null);
-
-    // Check cache first - always use cached image if available and not forcing generation
-    if (imageCache.current[npcId] && !forceGenerate) {
-        console.log(`Using cached image for: ${npcId}`);
-        setNpcImage(imageCache.current[npcId]);
-        return;
-    }
-
-    // Only proceed with API call if forceGenerate is true
-    if (!forceGenerate) {
-        return;
-    }
-
+  const generateNpcImage = async () => {
+    if (!selectedNpc) return;
+    
+    setIsGenerating(true);
     try {
-        const response = await fetch(`${BACKEND_URL}/generate-image/${npcId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+      const response = await fetch(`${BACKEND_URL}/generate-image/${selectedNpc.id}`, {
+        method: 'POST'
+      });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            if (response.status === 429) {
-                setImageError('Rate limit exceeded. Please wait before trying again.');
-                setRetryAfter(errorData.retryAfter);
-                // Retry after the specified time
-                setTimeout(() => generateNpcImage(npcId, true), errorData.retryAfter * 1000);
-            } else {
-                throw new Error(errorData.error || 'Failed to generate image');
-            }
-            return;
+      if (!response.ok) {
+        if (response.status === 429) {
+          const data = await response.json();
+          setImageError('Rate limit exceeded. Please try again later.');
+          setRetryAfter(data.retryAfter);
+          setTimeout(() => {
+            setImageError(null);
+            setRetryAfter(null);
+          }, data.retryAfter * 1000);
+        } else {
+          setImageError('Failed to generate image');
         }
+        return;
+      }
 
-        const data = await response.json();
-        console.log('Received new DALL-E image:', data.imageUrl);
-        // Update cache correctly using .current
-        imageCache.current[npcId] = data.imageUrl;
-        setNpcImage(data.imageUrl);
+      const data = await response.json();
+      // Force image reload by adding a timestamp
+      const timestamp = new Date().getTime();
+      setSelectedNpc(prev => ({
+        ...prev,
+        localImagePath: `${data.localImagePath}?t=${timestamp}`
+      }));
+      setImageError(null);
     } catch (error) {
-        console.error('Error loading image:', error);
-        setImageError(error.message);
-        setNpcImage(null);
+      console.error('Error generating image:', error);
+      setImageError('Failed to generate image');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -379,17 +367,17 @@ function App() {
     }
   };
 
-  // Add a new function to handle explicit image generation
-  const handleGenerateImage = () => {
-    if (selectedNpcId) {
-        generateNpcImage(selectedNpcId, true);
+  // Add effect to scroll to bottom when conversation history changes
+  useEffect(() => {
+    if (conversationRef.current) {
+      conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
     }
-  };
+  }, [conversationHistory]);
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>NPC Dialogue System</h1>
+        <h1>SpokeNPC</h1>
         <div className="header-controls">
           <select 
             value={selectedNpcId} 
@@ -401,19 +389,23 @@ function App() {
               <option key={npc.id} value={npc.id}>{npc.name}</option>
             ))}
           </select>
-          <button onClick={() => setIsGMMode(!isGMMode)}>
-            {isGMMode ? 'Switch to Player Mode' : 'Switch to GM Mode'}
-          </button>
-          <div className="voice-controls">
-            <label>
-              <input
-                type="checkbox"
-                checked={isSpeechEnabled}
-                onChange={(e) => setIsSpeechEnabled(e.target.checked)}
-              />
-              Enable NPC Voice
-            </label>
-            {isSpeaking && <span className="speaking-indicator">Speaking...</span>}
+          <div className="controls-row">
+            <div className="voice-controls">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={isSpeechEnabled}
+                  onChange={(e) => setIsSpeechEnabled(e.target.checked)}
+                />
+                Enable Voice
+              </label>
+              {isSpeaking && <span className="speaking-indicator">Speaking...</span>}
+            </div>
+            <button 
+              onClick={() => setIsGMMode(!isGMMode)}
+              className="mode-toggle-button">
+              {isGMMode ? 'Switch to Player' : 'Switch to GM'}
+            </button>
           </div>
         </div>
       </header>
@@ -421,29 +413,49 @@ function App() {
       {selectedNpc && (
         <div className="npc-profile">
           <div className="npc-image">
-            <div className="npc-image-container" onClick={() => setShowImageModal(true)}>
+            <div className="npc-image-container">
               {selectedNpc.localImagePath ? (
-                <img
-                  src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
-                  alt={selectedNpc.name}
-                  className="clickable-image"
-                />
+                <>
+                  <img
+                    src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
+                    alt={selectedNpc.name}
+                    className="clickable-image"
+                    onClick={() => setShowImageModal(true)}
+                  />
+                  {isGMMode && (
+                    <button 
+                      className="generate-image-button"
+                      onClick={generateNpcImage}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? 'Generating...' : 'Generate new image'}
+                    </button>
+                  )}
+                </>
               ) : (
                 <div className="no-image-placeholder">No image available</div>
+              )}
+              {imageError && (
+                <div className="image-error">
+                  {imageError}
+                  {retryAfter && (
+                    <div className="retry-message">
+                      Retrying in {retryAfter} seconds...
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             {isGMMode ? (
               <div className="npc-info">
-                <h2 className="npc-name">{npcContext.name}</h2>
-                <div className="npc-details">
-                  <p><strong>Description:</strong> {npcContext.description}</p>
-                  <p><strong>Personality:</strong> {npcContext.personality}</p>
-                  <p><strong>Current Scene:</strong> {npcContext.currentScene}</p>
-                </div>
+                <h2 className="npc-name">{selectedNpc.name}</h2>
+                <p className="npc-description">{selectedNpc.description}</p>
+                <p className="npc-personality"><strong>Personality:</strong> {selectedNpc.personality}</p>
+                <p className="npc-scene"><strong>Current Scene:</strong> {selectedNpc.currentScene}</p>
               </div>
             ) : (
-              <div className="npc-title">
-                <h2 className="npc-name">{npcContext.name}</h2>
+              <div className="player-npc-name">
+                <h2>{selectedNpc.name}</h2>
               </div>
             )}
           </div>
@@ -514,30 +526,23 @@ function App() {
             </div>
             <div className="form-actions">
               <button type="submit">Update NPC Context</button>
-              <button 
-                type="button" 
-                className="generate-image-button"
-                onClick={handleGenerateImage}
-              >
-                Generate New Image
-              </button>
             </div>
           </form>
         </div>
       ) : (
         <div className="player-interface">
           <div className="dialogue-container" ref={conversationRef}>
+            <div className="controls">
+              <button onClick={handleClearHistory} className="clear-history">
+                Clear Conversation History
+              </button>
+            </div>
             {conversationHistory.map((message, index) => (
               <div key={index} className={`message ${message.role}`}>
                 <h3>{message.role === 'user' ? 'You' : npcContext.name} says:</h3>
                 <p>{message.content}</p>
               </div>
             ))}
-          </div>
-          <div className="controls">
-            <button onClick={handleClearHistory} className="clear-history">
-              Clear Conversation History
-            </button>
           </div>
           <form onSubmit={handleSubmit} className="input-form">
             <div className="input-wrapper">
