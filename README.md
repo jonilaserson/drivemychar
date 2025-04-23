@@ -1,19 +1,25 @@
 # NPC Dialogue App
 
-An interactive application for managing and conversing with NPCs using AI.
+An interactive NPC dialogue system using AI for dynamic conversations.
 
 ## Setup
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   cd npc-dialogue-app/backend && npm install
-   cd ../frontend && npm install
-   ```
+1. Install dependencies for the backend:
+```bash
+cd npc-dialogue-app/backend
+npm install
+```
+
+2. Install dependencies for the frontend:
+```bash
+cd frontend
+npm install
+```
+
 3. Create a `.env` file in the backend directory with your OpenAI API key:
-   ```
-   OPENAI_API_KEY=your_key_here
-   ```
+```
+OPENAI_API_KEY=your_api_key_here
+```
 
 ## NPC Images
 
@@ -27,17 +33,18 @@ Note: Images are not tracked in Git due to their size. You'll need to add your o
 
 ## Running the Application
 
-1. Start the backend:
-   ```bash
-   cd npc-dialogue-app/backend && node server.js
-   ```
+1. Start the backend server:
+```bash
+cd npc-dialogue-app/backend
+node server.js
+```
 
-2. Start the frontend:
-   ```bash
-   cd npc-dialogue-app/frontend && npm start
-   ```
+2. In a new terminal, start the frontend development server:
+```bash
+cd frontend && npm start
+```
 
-3. Open http://localhost:3000 in your browser
+The application will be available at http://localhost:3000
 
 ## Features
 
