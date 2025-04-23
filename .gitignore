@@ -56,3 +56,6 @@ npc-dialogue-app/backend/data/
 
 # Virtual environments
 .venv
+
+# NPC Images (large binary files)
+npc-dialogue-app/backend/images/
