@@ -47,6 +47,7 @@ app.use('/images', express.static(path.join(__dirname, 'images')));
 const LOG_DIR = path.join(__dirname, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'model_prompts.log');
 const NPCS_DIR = path.join(__dirname, 'npcs');
+const CONFIG_DIR = path.join(__dirname, 'config');
 
 // Ensure directories exist
 if (!fs.existsSync(LOG_DIR)) {
@@ -55,6 +56,12 @@ if (!fs.existsSync(LOG_DIR)) {
 if (!fs.existsSync(NPCS_DIR)) {
     fs.mkdirSync(NPCS_DIR, { recursive: true });
 }
+if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
+// Load prompt format configuration
+const promptConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'prompt_format.json'), 'utf8'));
 
 // Load NPCs
 const npcs = {};
@@ -82,12 +89,16 @@ function logToFile(message) {
 
 // Function to format prompt with NPC data
 function formatPrompt(template, npcData) {
-    return template
+    // First replace the NPC-specific variables
+    const npcPrompt = template
         .replace('{name}', npcData.name)
         .replace('{description}', npcData.description)
         .replace('{personality}', npcData.personality)
         .replace('{currentScene}', npcData.currentScene)
         .replace('{gameContext}', npcData.gameContext);
+
+    // Then append the common formatting instructions
+    return `${npcPrompt}\n\n${promptConfig.promptFormat.instructions}`;
 }
 
 // Add this near the top with other constants
@@ -207,7 +218,9 @@ app.post('/speak/:npcId', async (req, res) => {
     const { text } = req.body;
     
     try {
-        logToFile(`Generating speech for text: ${text}`);
+        // Remove text within square brackets and trim any extra whitespace
+        const cleanText = text.replace(/\[.*?\]/g, '').trim();
+        logToFile(`Generating speech for text (after removing actions): ${cleanText}`);
         
         // Generate audio using ElevenLabs API
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${npc.voice.voiceId}`, {
@@ -218,7 +231,7 @@ app.post('/speak/:npcId', async (req, res) => {
                 'xi-api-key': process.env.ELEVENLABS_API_KEY
             },
             body: JSON.stringify({
-                text: text,
+                text: cleanText,
                 model_id: "eleven_multilingual_v2",
                 voice_settings: npc.voice.settings
             })

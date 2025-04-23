@@ -45,6 +45,7 @@ function App() {
   const [selectedNpcId, setSelectedNpcId] = useState('');
   const conversationRef = useRef(null);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
+  const [showImageModal, setShowImageModal] = useState(false);
 
   // Function to speak text using ElevenLabs
   const speakText = async (text) => {
@@ -401,7 +402,7 @@ function App() {
             ))}
           </select>
           <button onClick={() => setIsGMMode(!isGMMode)}>
-            Switch to {isGMMode ? 'Player' : 'GM'} Mode
+            {isGMMode ? 'Switch to Player Mode' : 'Switch to GM Mode'}
           </button>
           <div className="voice-controls">
             <label>
@@ -417,53 +418,49 @@ function App() {
         </div>
       </header>
 
-      <div className="npc-profile">
-        <div className="npc-image">
-          <div className="character-info">
-            <div className="npc-image-container">
-                {npcImage ? (
-                    <img 
-                        src={npcImage} 
-                        alt={selectedNpc?.name} 
-                        className="npc-image"
-                        onError={(e) => {
-                            console.error('Failed to load image:', e);
-                            setNpcImage(null);
-                        }}
-                    />
-                ) : (
-                    <div className="no-image-placeholder">
-                        No image available
-                    </div>
-                )}
-                {imageError && (
-                    <div className="image-error">
-                        {imageError}
-                        {retryAfter && (
-                            <div className="retry-message">
-                                Retrying in {retryAfter} seconds...
-                            </div>
-                        )}
-                    </div>
-                )}
+      {selectedNpc && (
+        <div className="npc-profile">
+          <div className="npc-image">
+            <div className="npc-image-container" onClick={() => setShowImageModal(true)}>
+              {selectedNpc.localImagePath ? (
+                <img
+                  src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
+                  alt={selectedNpc.name}
+                  className="clickable-image"
+                />
+              ) : (
+                <div className="no-image-placeholder">No image available</div>
+              )}
             </div>
-          </div>
-          {isGMMode ? (
-            <div className="npc-info">
-              <h2 className="npc-name">{npcContext.name}</h2>
-              <div className="npc-details">
-                <p><strong>Description:</strong> {npcContext.description}</p>
-                <p><strong>Personality:</strong> {npcContext.personality}</p>
-                <p><strong>Current Scene:</strong> {npcContext.currentScene}</p>
+            {isGMMode ? (
+              <div className="npc-info">
+                <h2 className="npc-name">{npcContext.name}</h2>
+                <div className="npc-details">
+                  <p><strong>Description:</strong> {npcContext.description}</p>
+                  <p><strong>Personality:</strong> {npcContext.personality}</p>
+                  <p><strong>Current Scene:</strong> {npcContext.currentScene}</p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="npc-title">
-              <h2 className="npc-name">{npcContext.name}</h2>
-            </div>
-          )}
+            ) : (
+              <div className="npc-title">
+                <h2 className="npc-name">{npcContext.name}</h2>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {showImageModal && selectedNpc && selectedNpc.localImagePath && (
+        <div className="modal-overlay" onClick={() => setShowImageModal(false)}>
+          <div className="modal-content">
+            <img
+              src={`${BACKEND_URL}${selectedNpc.localImagePath}`}
+              alt={selectedNpc.name}
+              className="modal-image"
+            />
+          </div>
+        </div>
+      )}
 
       {isGMMode ? (
         <div className="gm-interface">

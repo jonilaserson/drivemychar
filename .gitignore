@@ -63,9 +63,8 @@ npc-dialogue-app/backend/images/
 
 # Unused directories
 npc-dialogue-app/frontend/
+npc-dialogue-app/delme/
 
 # Test files
 npc-dialogue-app/backend/test-image.jpg
 
-# Data files that change frequently
-npc-dialogue-app/backend/data/image_data.json
