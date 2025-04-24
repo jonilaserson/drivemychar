@@ -157,13 +157,22 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 function getOrCreateSession(npcId) {
   // Check cache first
   if (sessionCache.has(npcId)) {
-    return sessionCache.get(npcId);
+    const session = sessionCache.get(npcId);
+    // Ensure interest exists
+    if (session.interest === undefined) {
+      session.interest = 3;
+    }
+    return session;
   }
   
   // Load from disk if not in cache
   const sessionPath = path.join(SESSIONS_DIR, `${npcId}.json`);
   if (fs.existsSync(sessionPath)) {
     const session = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
+    // Ensure interest exists
+    if (session.interest === undefined) {
+      session.interest = 3;
+    }
     sessionCache.set(npcId, session);
     return session;
   }
@@ -174,7 +183,8 @@ function getOrCreateSession(npcId) {
     sessionId: `${new Date().toISOString().split('T')[0]}-${npcId}-1`,
     startedAt: new Date().toISOString(),
     lastActive: new Date().toISOString(),
-    patience: 100,
+    patience: 5, // Changed from 100 to 5 (max value in new scale)
+    interest: 3, // Default interest value
     messages: []
   };
   
@@ -224,6 +234,14 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
     }
     
     const session = getOrCreateSession(npcId);
+    
+    // Initialize interest if it doesn't exist
+    if (session.interest === undefined) {
+      session.interest = 3; // Default starting value
+      // Save the update
+      updateSession(npcId, { interest: session.interest });
+    }
+    
     logInfo(`Retrieved context for ${npcId}, session ${session.sessionId}`);
     
     const localImagePath = `/images/${npc.id}.png`;
@@ -239,6 +257,7 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
       session: {
         id: session.sessionId,
         patience: session.patience,
+        interest: session.interest, // Include interest in the response
         lastUpdated: session.lastActive
       },
       localImagePath: hasLocalImage ? localImagePath : null,
@@ -250,6 +269,26 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
   }
 });
 
+// Function to broadcast attribute updates to all connected clients
+function broadcastAttributeUpdate(npcId, type, value) {
+  const clients = SSE_CLIENTS.get(npcId);
+  if (!clients) return;
+
+  const eventData = JSON.stringify({
+    type: `${type}Update`,
+    [type]: value
+  });
+
+  for (const client of clients) {
+    try {
+      client.write(`data: ${eventData}\n\n`);
+    } catch (error) {
+      console.error(`Error broadcasting ${type} update:`, error);
+      clients.delete(client);
+    }
+  }
+}
+
 // Endpoint for GM to adjust patience
 app.post('/api/npc/:npcId/patience', (req, res) => {
   try {
@@ -257,9 +296,16 @@ app.post('/api/npc/:npcId/patience', (req, res) => {
     const { adjustment } = req.body;
     
     const session = getOrCreateSession(npcId);
+    
+    // Calculate new patience value, keeping it between 0-5
+    const newPatience = Math.max(0, Math.min(5, session.patience + adjustment));
+    
     const updatedSession = updateSession(npcId, {
-      patience: session.patience + adjustment
+      patience: newPatience
     });
+    
+    // Broadcast the update to all connected clients
+    broadcastAttributeUpdate(npcId, 'patience', newPatience);
     
     logInfo(`Adjusted patience for ${npcId} by ${adjustment}, new value: ${updatedSession.patience}`);
     res.json({ 
@@ -268,6 +314,40 @@ app.post('/api/npc/:npcId/patience', (req, res) => {
     });
   } catch (error) {
     logError('Error adjusting patience:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Endpoint for GM to adjust interest
+app.post('/api/npc/:npcId/interest', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const { adjustment } = req.body;
+    
+    const session = getOrCreateSession(npcId);
+    
+    // Initialize interest if it doesn't exist
+    if (session.interest === undefined) {
+      session.interest = 3; // Default starting value
+    }
+    
+    // Calculate new interest value, keeping it between 0-5
+    const newInterest = Math.max(0, Math.min(5, session.interest + adjustment));
+    
+    const updatedSession = updateSession(npcId, {
+      interest: newInterest
+    });
+    
+    // Broadcast the update to all connected clients
+    broadcastAttributeUpdate(npcId, 'interest', newInterest);
+    
+    logInfo(`Adjusted interest for ${npcId} by ${adjustment}, new value: ${updatedSession.interest}`);
+    res.json({ 
+      success: true, 
+      interest: updatedSession.interest 
+    });
+  } catch (error) {
+    logError('Error adjusting interest:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -297,19 +377,19 @@ app.get('/sse/conversation/:npcId', (req, res) => {
   
   // Add this client to the SSE clients map
   if (!SSE_CLIENTS.has(npcId)) {
-    SSE_CLIENTS.set(npcId, new Map());
+    SSE_CLIENTS.set(npcId, new Set());
   }
   
-  const clientMap = SSE_CLIENTS.get(npcId);
+  const clients = SSE_CLIENTS.get(npcId);
   const clientKey = `${clientId}_${Date.now()}`;
-  clientMap.set(clientKey, res);
+  clients.add(res);
   
   // Handle client disconnect
   req.on('close', () => {
     logInfo(`SSE connection closed for ${npcId} from client ${clientId}`);
     if (SSE_CLIENTS.has(npcId)) {
       const clients = SSE_CLIENTS.get(npcId);
-      clients.delete(clientKey);
+      clients.delete(res);
       if (clients.size === 0) {
         SSE_CLIENTS.delete(npcId);
       }
@@ -339,11 +419,16 @@ function sendConversationUpdate(res, session) {
     const data = {
       conversationHistory: session.messages || [],
       lastUpdated: session.lastActive,
-      messageCount: session.messages ? session.messages.length : 0
+      messageCount: session.messages ? session.messages.length : 0,
+      session: {
+        patience: session.patience,
+        interest: session.interest, // Include interest in SSE updates
+        id: session.sessionId
+      }
     };
     
     const eventData = JSON.stringify(data);
-    logInfo(`Sending update event with ${data.messageCount} messages`);
+    logInfo(`Sending update event with ${data.messageCount} messages, patience: ${session.patience}, interest: ${session.interest || 'N/A'}`);
     
     res.write('event: update\n');
     res.write(`data: ${eventData}\n\n`);
@@ -361,7 +446,7 @@ function broadcastConversationUpdate(npcId) {
   
   logInfo(`Broadcasting update to ${clients.size} clients for ${npcId}`);
   
-  for (const res of clients.values()) {
+  for (const res of clients) {
     sendConversationUpdate(res, session);
   }
 }
@@ -604,6 +689,58 @@ app.post('/generate-image/:npcId', async (req, res) => {
     
     res.status(500).json({ error: 'Failed to generate image' });
   }
+});
+
+// SSE endpoint for real-time updates
+app.get('/api/events/:npcId', (req, res) => {
+  const { npcId } = req.params;
+  const session = getOrCreateSession(npcId);
+
+  // Set headers for SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+
+  // Send initial state
+  const initialData = JSON.stringify({
+    type: 'initialState',
+    patience: session.patience,
+    interest: session.interest || 3
+  });
+  res.write(`data: ${initialData}\n\n`);
+
+  // Add client to the SSE_CLIENTS map
+  if (!SSE_CLIENTS.has(npcId)) {
+    SSE_CLIENTS.set(npcId, new Set());
+  }
+  SSE_CLIENTS.get(npcId).add(res);
+
+  // Remove client on connection close
+  req.on('close', () => {
+    if (SSE_CLIENTS.has(npcId)) {
+      const clients = SSE_CLIENTS.get(npcId);
+      clients.delete(res);
+      if (clients.size === 0) {
+        SSE_CLIENTS.delete(npcId);
+      }
+    }
+  });
+
+  // Setup heartbeat
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now() })}\n\n`);
+    } catch (error) {
+      clearInterval(heartbeatInterval);
+    }
+  }, 30000);
+
+  // Clear heartbeat on close
+  req.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
 });
 
 // Start the server
