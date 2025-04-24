@@ -88,7 +88,7 @@ const InterestIcon = () => {
   console.log('Rendering InterestIcon component');
   return (
     <img 
-      src="/images/interest-icon.jpg" 
+      src="/images/interest-icon.png" 
       alt="Interest" 
       className="interest-icon-img"
       style={{
