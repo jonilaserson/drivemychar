@@ -1,0 +1,17 @@
+{
+    "systemPrompt": {
+        "template": "You are {name}. {description} {personality} You are currently in {currentScene}. Game Context: {gameContext}\n\nKeep responses concise (2-3 sentences) but meaningful, focusing on staying in character while providing accurate information when asked about specific D&D rules or lore. Reference previous parts of the conversation when relevant."
+    },
+    "providers": {
+        "voice": {
+            "elevenlabs": {
+                "defaultSettings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "style": 0.0,
+                    "use_speaker_boost": true
+                }
+            }
+        }
+    }
+} 
