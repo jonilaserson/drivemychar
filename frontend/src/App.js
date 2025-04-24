@@ -13,6 +13,117 @@ const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
 console.log('Using backend URL:', BACKEND_URL);
 console.log('Client ID:', CLIENT_ID);
 
+// Helper function to get color based on value
+function getAttributeColor(value) {
+  if (value > 3) return '#4CAF50'; // Green
+  if (value > 2) return '#FFC107'; // Yellow
+  if (value > 1) return '#FF9800'; // Orange
+  return '#F44336'; // Red
+}
+
+// Generic AttributePoints component to replace both PatiencePoints and InterestPoints
+const AttributePoints = ({ points, maxPoints = 5, activeColor = '#4CAF50', className = 'patience-points' }) => {
+  // Debug log to track rendering
+  console.log(`DEBUGGING: AttributePoints rendering with class=${className}, points=${points}`);
+  
+  // Determine color based on total points
+  let color = activeColor; 
+  if (points <= 1) color = '#F44336'; // Red
+  else if (points <= 2) color = '#FF9800'; // Orange
+  else if (points <= 3) color = '#FFC107'; // Yellow
+  
+  // Force points to be a number between 0-5
+  const safePoints = Math.max(0, Math.min(5, Number(points) || 0));
+  console.log(`DEBUGGING: Safe points value: ${safePoints} (original: ${points})`);
+  
+  // Create array for the points
+  const pointsArray = [...Array(maxPoints)];
+  
+  return (
+    <div className={className}>
+      {pointsArray.map((_, i) => {
+        // Determine if this point is active
+        const isActive = i < safePoints;
+        const pointClass = className.replace('points', 'point');
+        
+        return (
+          <div 
+            key={i} 
+            className={`${pointClass} ${isActive ? 'active' : ''}`}
+            style={{ backgroundColor: isActive ? color : 'transparent' }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
+// Use AttributePoints for both patience and interest
+const PatiencePoints = (props) => <AttributePoints {...props} className="patience-points" activeColor="#4CAF50" />;
+const InterestPoints = (props) => {
+  console.log('DEBUGGING: Rendering InterestPoints with props', props);
+  return <AttributePoints {...props} className="interest-points" activeColor="#FFD700" />;
+};
+
+// Patience meter icon component
+const PatienceIcon = () => {
+  console.log('Rendering PatienceIcon component');
+  return (
+    <img 
+      src="/images/patience-icon.png" 
+      alt="Patience" 
+      className="patience-icon-img"
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain'
+      }}
+    />
+  );
+};
+
+// Interest meter icon component
+const InterestIcon = () => {
+  console.log('Rendering InterestIcon component');
+  return (
+    <img 
+      src="/images/interest-icon.jpg" 
+      alt="Interest" 
+      className="interest-icon-img"
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain'
+      }}
+    />
+  );
+};
+
+// Generic AttributeTracker component
+const AttributeTracker = ({ label, value, icon, onIncrement, onDecrement, isGmMode }) => {
+  const color = getAttributeColor(value);
+  
+  return (
+    <div className="attribute-tracker">
+      <div className="attribute-icon">{icon}</div>
+      <div className="attribute-points">
+        {isGmMode && <button onClick={onDecrement}>-</button>}
+        {Array.from({ length: 5 }, (_, i) => (
+          <div 
+            key={i} 
+            className={`attribute-point ${i < value ? 'active' : ''}`}
+            style={i < value ? { backgroundColor: color } : {}}
+          />
+        ))}
+        {isGmMode && <button onClick={onIncrement}>+</button>}
+      </div>
+      <div className="attribute-label">{label}</div>
+    </div>
+  );
+};
+
 function App() {
   const [npcs, setNpcs] = useState([]);
   const [selectedNpc, setSelectedNpc] = useState(null);
@@ -61,6 +172,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const audioCache = useRef({}); // Cache for audio blobs by NPC ID and text
+  const [patiencePoints, setPatiencePoints] = useState(5);
+  const [interestPoints, setInterestPoints] = useState(3);
 
   // Function to load and set an image from a URL
   const loadAndSetImage = async (imageUrl, fallbackUrl = null) => {
@@ -321,35 +434,31 @@ function App() {
     
     // Create a new SSE connection
     const timestamp = Date.now(); // Add timestamp to prevent caching
-    const eventSource = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}&t=${timestamp}`);
+    const eventSource = new EventSource(`${BACKEND_URL}/api/events/${selectedNpcId}`);
     sseSourceRef.current = eventSource;
     
-    // Listen for connection open
-    eventSource.addEventListener('connected', (event) => {
-      const data = JSON.parse(event.data);
-      console.log('SSE connection established:', data);
-    });
-    
-    // Listen for conversation updates
-    eventSource.addEventListener('update', (event) => {
+    // Listen for all event types
+    eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log(`Received conversation update (${data.messageCount || 0} messages)`);
+        console.log('SSE event received:', data);
         
-        // Always update the conversation history, even if empty
-        console.log('Updating conversation history:', data.conversationHistory);
-        setConversationHistory(data.conversationHistory || []);
-        conversationHistories.current[selectedNpcId] = data.conversationHistory || [];
-        setLastUpdated(data.lastUpdated);
+        if (data.type === 'initialState') {
+          setPatiencePoints(data.patience);
+          setInterestPoints(data.interest);
+        } else if (data.type === 'patienceUpdate') {
+          setPatiencePoints(data.patience);
+        } else if (data.type === 'interestUpdate') {
+          setInterestPoints(data.interest);
+        } else if (data.type === 'update' && data.conversationHistory) {
+          setConversationHistory(data.conversationHistory);
+          conversationHistories.current[selectedNpcId] = data.conversationHistory;
+          setLastUpdated(data.lastUpdated);
+        }
       } catch (error) {
-        console.error('Error processing SSE update:', error);
+        console.error('Error processing SSE event:', error);
       }
-    });
-    
-    // Listen for heartbeat
-    eventSource.addEventListener('heartbeat', () => {
-      console.log('SSE heartbeat received');
-    });
+    };
     
     // Handle errors
     eventSource.onerror = (error) => {
@@ -359,7 +468,7 @@ function App() {
         setTimeout(() => {
           console.log('Attempting to reconnect SSE...');
           eventSource.close();
-          sseSourceRef.current = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}`);
+          sseSourceRef.current = new EventSource(`${BACKEND_URL}/api/events/${selectedNpcId}`);
         }, 5000);
       }
     };
@@ -384,6 +493,11 @@ function App() {
         const data = await response.json();
         setSelectedNpc(data);
         setNpcContext(data);
+        
+        // Set patience from session if available
+        if (data.session && data.session.patience !== undefined) {
+          setPatiencePoints(data.session.patience);
+        }
         
         // Use server-side conversation history if available
         if (data.conversationHistory && data.conversationHistory.length > 0) {
@@ -538,6 +652,11 @@ function App() {
           console.log(`Fresh SSE: Received conversation update (${data.messageCount || 0} messages)`);
           setConversationHistory(data.conversationHistory || []);
           conversationHistories.current[selectedNpc.id] = data.conversationHistory || [];
+          
+          // Update patience points from percentage
+          if (data.session && data.session.patience !== undefined) {
+            setPatiencePoints(data.session.patience);
+          }
         } catch (error) {
           console.error('Error processing SSE update after clear:', error);
         }
@@ -635,10 +754,58 @@ function App() {
     }
   }, [conversationHistory]);
 
+  // Generic function to adjust attributes
+  const adjustAttribute = (type, adjustment) => {
+    if (!selectedNpc) return;
+    
+    // Get current value and setter based on attribute type
+    const currentValue = type === 'patience' ? patiencePoints : interestPoints;
+    const setter = type === 'patience' ? setPatiencePoints : setInterestPoints;
+    
+    // Calculate new value with bounds check
+    const newValue = Math.max(0, Math.min(5, currentValue + adjustment));
+    
+    // Update state immediately for responsiveness
+    setter(newValue);
+    
+    // Send request to server
+    const endpoint = `${BACKEND_URL}/api/npc/${selectedNpc.id}/${type}`;
+    console.log(`Adjusting ${type} by ${adjustment}, endpoint: ${endpoint}`);
+    
+    fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ adjustment })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`Error adjusting ${type}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      // Update with server value
+      if (data[type] !== undefined) {
+        setter(data[type]);
+      }
+    })
+    .catch(error => {
+      console.error(`Error adjusting ${type}:`, error);
+      // Revert on error
+      setter(currentValue);
+    });
+  };
+
+  // Define simple wrapper functions for each attribute
+  const adjustPatience = (adjustment) => adjustAttribute('patience', adjustment);
+  const adjustInterest = (adjustment) => adjustAttribute('interest', adjustment);
+
   return (
     <div className="App">
       <header className="App-header">
-        <h1>SpokeNPC</h1>
+        <h1>DriveMyChar</h1>
         <div className="header-controls">
           <select 
             value={selectedNpcId} 
@@ -703,6 +870,25 @@ function App() {
             {isGMMode ? (
               <div className="npc-info">
                 <h2 className="npc-name">{selectedNpc.name}</h2>
+                
+                <AttributeTracker
+                  label="Patience"
+                  value={patiencePoints}
+                  icon={<PatienceIcon />}
+                  onIncrement={() => adjustPatience(1)}
+                  onDecrement={() => adjustPatience(-1)}
+                  isGmMode={isGMMode}
+                />
+                
+                <AttributeTracker
+                  label="Interest"
+                  value={interestPoints}
+                  icon={<InterestIcon />}
+                  onIncrement={() => adjustInterest(1)}
+                  onDecrement={() => adjustInterest(-1)}
+                  isGmMode={isGMMode}
+                />
+                
                 <p className="npc-description">{selectedNpc.description}</p>
                 <p className="npc-personality"><strong>Personality:</strong> {selectedNpc.personality}</p>
                 <p className="npc-scene"><strong>Current Scene:</strong> {selectedNpc.currentScene}</p>
@@ -710,6 +896,25 @@ function App() {
             ) : (
               <div className="player-npc-name">
                 <h2>{selectedNpc.name}</h2>
+                
+                <AttributeTracker
+                  label="Patience"
+                  value={patiencePoints}
+                  icon={<PatienceIcon />}
+                  onIncrement={() => adjustPatience(1)}
+                  onDecrement={() => adjustPatience(-1)}
+                  isGmMode={isGMMode}
+                />
+                
+                <AttributeTracker
+                  label="Interest"
+                  value={interestPoints}
+                  icon={<InterestIcon />}
+                  onIncrement={() => adjustInterest(1)}
+                  onDecrement={() => adjustInterest(-1)}
+                  isGmMode={isGMMode}
+                />
+                
               </div>
             )}
           </div>

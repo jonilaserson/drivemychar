@@ -928,15 +928,61 @@ button:hover {
   }
 
   .player-npc-name {
-    display: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 15px;
+    margin-top: 10px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .player-npc-name h2 {
+    font-size: 2em;
+    margin: 0 0 10px 0;
   }
 
-  .player-interface .npc-image {
-    padding: 0;
+  .patience-tracker.player-mode,
+  .interest-tracker.player-mode {
+    display: flex !important;
+    margin: 10px auto;
+    max-width: 280px;
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 10px;
+    box-sizing: border-box;
+    gap: 8px;
   }
 
-  .generate-image-button {
-    border-radius: 0;
+  .patience-tracker.player-mode .patience-icon,
+  .interest-tracker.player-mode .interest-icon {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .patience-tracker.player-mode .patience-points,
+  .interest-tracker.player-mode .interest-points {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+    justify-content: flex-start;
+  }
+
+  .patience-point,
+  .interest-point {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+  }
+
+  .patience-label,
+  .interest-label {
+    min-width: 60px;
+    font-size: 0.8em;
+    margin-left: 0;
+    text-align: right;
   }
 }
 
@@ -951,34 +997,579 @@ button:hover {
 }
 
 .player-npc-name {
-  flex: 1;
-  display: flex;
+  display: flex !important;
+  flex-direction: column;
   align-items: center;
-  padding: 0 30px;
+  width: 100%;
+  padding: 0 20px;
+}
+
+.player-npc-name .patience-tracker.player-mode,
+.player-npc-name .interest-tracker.player-mode {
+  display: flex !important;
+  margin: 10px auto;
+  max-width: 300px;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+}
+
+.player-npc-name .patience-tracker.player-mode .patience-icon,
+.player-npc-name .interest-tracker.player-mode .interest-icon {
+  display: flex !important;
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  margin-right: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.player-npc-name .patience-tracker.player-mode .patience-icon-img,
+.player-npc-name .interest-tracker.player-mode .interest-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .player-npc-name .patience-tracker.player-mode .patience-icon,
+  .player-npc-name .interest-tracker.player-mode .interest-icon {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .player-npc-name .patience-tracker.player-mode,
+  .player-npc-name .interest-tracker.player-mode {
+    max-width: 280px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .patience-point,
+  .interest-point {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+  }
 }
 
 .player-npc-name h2 {
   color: #2c3e50;
   font-size: 2.5em;
+  margin: 0 0 15px 0;
+  text-align: center;
+}
+
+/* Patience Tracker Styles */
+.patience-tracker {
+  display: flex !important;
+  align-items: center;
+  margin: 10px 0;
+  gap: 15px;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.patience-tracker .patience-icon,
+.patience-tracker.player-mode .patience-icon {
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+}
+
+.patience-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block !important;
+}
+
+/* Ensure icon is visible in both modes */
+.patience-tracker .patience-icon,
+.patience-tracker.player-mode .patience-icon,
+.player-npc-name .patience-tracker .patience-icon {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Points display for both modes */
+.patience-points {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.patience-point {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #546e7a;
+  transition: background-color 0.3s ease;
+}
+
+.patience-point.active {
+  border-color: transparent;
+}
+
+.patience-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-grow: 1;
+}
+
+.patience-controls button {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background-color: #37474f;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   margin: 0;
-  text-align: left;
+  font-size: 20px;
+  transition: background-color 0.2s ease;
 }
 
-/* Mobile-specific styles */
+.patience-controls button:hover {
+  background-color: #263238;
+}
+
+.patience-controls span {
+  font-size: 1.1em;
+  color: #546e7a;
+  min-width: 120px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.player-mode .patience-points {
+  max-width: 200px;
+  justify-content: center;
+}
+
+/* Mobile responsiveness for patience tracker */
 @media (max-width: 768px) {
-  .player-npc-name {
-    display: none; /* Hide the name on mobile */
+  .patience-tracker {
+    margin: 10px auto;
+    max-width: 300px;
+    gap: 10px;
   }
-
-  .npc-image {
-    flex-direction: column;
-    padding: 0;
-    gap: 0;
+  
+  .patience-tracker.player-mode {
+    margin: 10px auto;
+    max-width: 240px;
+    justify-content: center;
+  }
+  
+  .patience-tracker .patience-icon {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .patience-point {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .patience-controls {
+    flex-grow: 0;
+    order: 2;
+    margin: 0 auto;
+  }
+  
+  .patience-controls button {
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+  }
+  
+  .patience-label {
+    min-width: 60px;
+    font-size: 0.8em;
   }
 }
 
-/* Add specific styles for player mode */
-.player-interface .npc-image {
-  padding: 20px 0 20px 20px;
-  align-items: center; /* Center vertically with the name */
+.patience-label {
+  font-size: 0.9em;
+  color: #546e7a;
+  min-width: 80px;
+  text-align: left;
+  font-weight: normal;
+  opacity: 0.8;
+  margin-left: auto;
 }
+
+/* Interest Tracker Styles - exact copy of patience tracker */
+.interest-tracker {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  gap: 15px;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.interest-tracker .interest-icon,
+.interest-tracker.player-mode .interest-icon {
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+}
+
+.interest-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Ensure icon is visible in both modes */
+.interest-tracker .interest-icon,
+.interest-tracker.player-mode .interest-icon,
+.player-npc-name .interest-tracker .interest-icon {
+  display: flex;
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Interest Points Styles - exact match to patience points */
+.interest-points {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.interest-point {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #546e7a;
+  transition: background-color 0.3s ease;
+}
+
+.interest-point.active {
+  border-color: transparent;
+  background-color: #4CAF50;  /* Same green color as patience points */
+}
+
+.interest-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-grow: 1;
+}
+
+.interest-controls button {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background-color: #37474f;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  font-size: 20px;
+  transition: background-color 0.2s ease;
+}
+
+.interest-controls button:hover {
+  background-color: #263238;
+}
+
+.interest-controls span {
+  font-size: 1.1em;
+  color: #546e7a;
+  min-width: 120px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.player-mode .interest-points {
+  max-width: 200px;
+  justify-content: center;
+}
+
+/* Mobile responsiveness for interest tracker */
+@media (max-width: 768px) {
+  .interest-tracker {
+    margin: 10px auto;
+    max-width: 300px;
+    gap: 10px;
+  }
+  
+  .interest-tracker.player-mode {
+    margin: 10px auto;
+    max-width: 240px;
+    justify-content: center;
+  }
+  
+  .interest-tracker .interest-icon {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .interest-point {
+    width: 16px;
+    height: 16px;
+  }
+  
+  .interest-controls {
+    flex-grow: 0;
+    order: 2;
+    margin: 0 auto;
+  }
+  
+  .interest-controls button {
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+  }
+  
+  .interest-label {
+    min-width: 60px;
+    font-size: 0.8em;
+  }
+}
+
+.interest-label {
+  font-size: 0.9em;
+  color: #546e7a;
+  min-width: 80px;
+  text-align: left;
+  font-weight: normal;
+  opacity: 0.8;
+  margin-left: auto;
+}
+
+/* Add spacing between trackers */
+.patience-tracker + .interest-tracker {
+  margin-top: 5px;
+}
+
+/* Player mode specific adjustments */
+.player-mode {
+  max-width: 400px;
+  margin: 10px auto;
+}
+
+.player-mode .patience-controls button,
+.player-mode .interest-controls button {
+  display: none !important;
+}
+
+.player-mode .patience-controls,
+.player-mode .interest-controls {
+  display: none !important;
+}
+
+.player-mode .patience-points,
+.player-mode .interest-points {
+  display: flex !important;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.player-mode .patience-point,
+.player-mode .interest-point {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 50%;
+  border: 2px solid #546e7a;
+  transition: background-color 0.3s ease;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.player-mode .patience-point.active,
+.player-mode .interest-point.active {
+  border-color: transparent;
+  background-color: #4CAF50;
+}
+
+/* Mobile adjustments for points */
+@media (max-width: 768px) {
+  .player-mode .patience-point,
+  .player-mode .interest-point {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+  }
+
+  .player-mode .patience-points,
+  .player-mode .interest-points {
+    gap: 6px;
+  }
+}
+
+.player-mode .patience-label,
+.player-mode .interest-label {
+  min-width: 60px;
+  text-align: right;
+  margin-left: auto;
+}
+
+/* Ensure consistent spacing in player mode */
+.player-mode .patience-tracker,
+.player-mode .interest-tracker {
+  display: flex !important;
+  margin: 10px auto;
+  max-width: 300px;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  box-sizing: border-box;
+}
+
+/* Override any potential hiding styles */
+.player-mode .patience-points,
+.player-mode .interest-points {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.player-mode .patience-point,
+.player-mode .interest-point {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.attribute-tracker {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  gap: 15px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.attribute-icon {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attribute-points {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  justify-content: center;
+}
+
+.attribute-point {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  border-radius: 50%;
+  border: 2px solid #546e7a;
+  transition: background-color 0.3s ease;
+}
+
+.attribute-point.active {
+  border-color: transparent;
+  background-color: #4CAF50;
+}
+
+.attribute-label {
+  min-width: 60px;
+  color: #546e7a;
+  font-size: 0.9em;
+  text-align: right;
+}
+
+.attribute-points button {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #546e7a;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  padding: 0;
+  line-height: 1;
+}
+
+.attribute-points button:hover {
+  background: #455a64;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .attribute-tracker {
+    max-width: 280px;
+    margin: 8px auto;
+  }
+
+  .attribute-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+  }
+
+  .attribute-point {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+  }
+
+  .attribute-points {
+    gap: 6px;
+  }
+
+  .attribute-points button {
+    width: 20px;
+    height: 20px;
+    font-size: 16px;
+  }
+}
+
