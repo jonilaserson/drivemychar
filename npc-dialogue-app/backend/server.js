@@ -597,7 +597,7 @@ app.post('/speak/:npcId', async (req, res) => {
             },
             body: JSON.stringify({
                 text: cleanText,
-                model_id: "eleven_multilingual_v2",
+                model_id: "eleven_flash_v2_5",
                 voice_settings: voiceSettings
             })
         });

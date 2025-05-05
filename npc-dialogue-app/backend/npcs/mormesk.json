@@ -7,7 +7,7 @@
     "gameContext": "Lost Mine of Phandelver (LMOP) - Wave Echo Cave. Mormesk leads the undead that haunt the cave and has a particular rivalry with the delusional spectator guarding the Forge of Spells. He was one of the last wizards to die in the spell battle during the bandit attack centuries ago.",
     "voice": {
         "provider": "elevenlabs",
-        "voiceId": "xYWUvKNK6zWCgsdAK7Wi",
+        "voiceId": "g5CIjZEefAph4nQFvHAz",
         "settings": {
             "stability": 0.35,
             "similarity_boost": 0.75,
