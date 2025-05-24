@@ -11,6 +11,23 @@ const { logRequest, logError, logInfo } = require('./utils/logger');
 
 const app = express();
 
+// Ensure all required directories exist
+const REQUIRED_DIRS = [
+  path.join(__dirname, 'logs'),
+  path.join(__dirname, 'npcs'),
+  path.join(__dirname, 'images'),
+  path.join(__dirname, 'data'),
+  path.join(__dirname, 'data', 'sessions'),
+  path.join(__dirname, 'config')
+];
+
+REQUIRED_DIRS.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log(`Created directory: ${dir}`);
+  }
+});
+
 // Enable CORS and JSON parsing
 app.use(cors({
     origin: true, // Allow all origins in development
@@ -19,6 +36,23 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Add root route handler
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'NPC Dialogue App API is running',
+    availableEndpoints: {
+      getNPCs: '/npcs',
+      getNPCContext: '/context/:npcId',
+      chat: '/chat/:npcId',
+      speak: '/speak/:npcId',
+      generateImage: '/generate-image/:npcId',
+      realTimeUpdates: '/sse/conversation/:npcId'
+    },
+    docs: 'See README.md for detailed API documentation'
+  });
+});
 
 // Add request logging middleware BEFORE static file serving
 app.use((req, res, next) => {
@@ -57,17 +91,6 @@ const LOG_DIR = path.join(__dirname, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'model_prompts.log');
 const NPCS_DIR = path.join(__dirname, 'npcs');
 const CONFIG_DIR = path.join(__dirname, 'config');
-
-// Ensure directories exist
-if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-}
-if (!fs.existsSync(NPCS_DIR)) {
-    fs.mkdirSync(NPCS_DIR, { recursive: true });
-}
-if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-}
 
 // Load prompt format configuration
 const promptConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'prompt_format.json'), 'utf8'));
