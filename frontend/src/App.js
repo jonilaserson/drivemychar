@@ -167,14 +167,16 @@ function App() {
   const [npcImage, setNpcImage] = useState(null);
   const [imageError, setImageError] = useState(null);
   const [conversationHistory, setConversationHistory] = useState([]);
-  const [lastUpdated, setLastUpdated] = useState(null);
   const [isGMMode, setIsGMMode] = useState(false);
   const [isSpeechEnabled, setIsSpeechEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [recognition, setRecognition] = useState(null);
   const [showProgress, setShowProgress] = useState(false);
+  // These states are used in the InterestPoints component and image generation
+  // eslint-disable-next-line no-unused-vars
   const [isCelebrating, setIsCelebrating] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [retryAfter, setRetryAfter] = useState(null);
   
   // Refs
@@ -717,9 +719,6 @@ function App() {
           console.log('Using server-side conversation history');
           setConversationHistory(data.conversationHistory);
           conversationHistories.current[selectedNpcId] = data.conversationHistory;
-          if (data.session && data.session.lastUpdated) {
-            setLastUpdated(data.session.lastUpdated);
-          }
         } else {
           // Reset conversation history for this NPC if no server history
           if (!loadedNpcs.current.has(selectedNpcId)) {
@@ -727,7 +726,6 @@ function App() {
             loadedNpcs.current.add(selectedNpcId);
           }
           setConversationHistory(conversationHistories.current[selectedNpcId] || []);
-          setLastUpdated(new Date().toISOString());
         }
         
         // Reset image state
