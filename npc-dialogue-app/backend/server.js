@@ -78,7 +78,21 @@ const npcs = {};
 fs.readdirSync(NPCS_DIR).forEach(file => {
     if (file.endsWith('.json')) {
         const npcData = JSON.parse(fs.readFileSync(path.join(NPCS_DIR, file), 'utf8'));
-        npcs[npcData.id] = npcData;
+        // Merge with default config and ensure all required fields are present
+        npcs[npcData.id] = {
+            ...npcData,
+            responseTriggers: npcConfig.responseTriggers,
+            // Ensure arrays are initialized if not present
+            whatTheyKnow: npcData.whatTheyKnow || [],
+            pitfalls: npcData.pitfalls || [],
+            motivations: npcData.motivations || [],
+            // Ensure string fields have defaults
+            name: npcData.name || 'Unknown',
+            description: npcData.description || '',
+            personality: npcData.personality || '',
+            currentScene: npcData.currentScene || ''
+        };
+        logInfo(`Loaded NPC ${npcData.id} with response triggers: ${JSON.stringify(npcConfig.responseTriggers)}`);
     }
 });
 
@@ -183,8 +197,9 @@ function getOrCreateSession(npcId) {
     sessionId: `${new Date().toISOString().split('T')[0]}-${npcId}-1`,
     startedAt: new Date().toISOString(),
     lastActive: new Date().toISOString(),
-    patience: 5, // Changed from 100 to 5 (max value in new scale)
-    interest: 3, // Default interest value
+    attitude: 'neutral', // Default attitude
+    patience: 3, // Default patience for neutral attitude
+    interest: 2, // Default interest for neutral attitude
     messages: []
   };
   
@@ -269,24 +284,62 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
   }
 });
 
+// Add POST endpoint for updating NPC context
+app.post(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const updatedNpc = req.body;
+    
+    // Validate required fields
+    if (!updatedNpc.id || !updatedNpc.name || !updatedNpc.description || 
+        !updatedNpc.personality || !updatedNpc.currentScene || !updatedNpc.gameContext) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    // Update the NPC data
+    npcs[npcId] = updatedNpc;
+    
+    // Save to file
+    const filePath = path.join(NPCS_DIR, `${npcId}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(updatedNpc, null, 2));
+    
+    logInfo(`Updated context for ${npcId}`);
+    
+    // Return the updated NPC data
+    res.json(updatedNpc);
+  } catch (error) {
+    logError('Error updating NPC context:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Function to broadcast attribute updates to all connected clients
 function broadcastAttributeUpdate(npcId, type, value) {
   const clients = SSE_CLIENTS.get(npcId);
-  if (!clients) return;
+  if (!clients) {
+    logInfo(`No clients found for ${npcId} when trying to broadcast ${type} update`);
+    return;
+  }
 
+  logInfo(`Broadcasting ${type} update (${value}) to ${clients.size} clients for ${npcId}`);
   const eventData = JSON.stringify({
-    type: `${type}Update`,
-    [type]: value
+    type,
+    value
   });
 
+  let successCount = 0;
   for (const client of clients) {
     try {
+      client.write('event: attributeUpdate\n');
       client.write(`data: ${eventData}\n\n`);
+      successCount++;
+      logInfo(`Successfully sent ${type} update to client (${successCount}/${clients.size})`);
     } catch (error) {
-      console.error(`Error broadcasting ${type} update:`, error);
+      logError(`Error broadcasting ${type} update to client:`, error);
       clients.delete(client);
     }
   }
+  logInfo(`Completed broadcasting ${type} update. ${successCount} successful out of ${clients.size} clients`);
 }
 
 // Endpoint for GM to adjust patience
@@ -378,11 +431,13 @@ app.get('/sse/conversation/:npcId', (req, res) => {
   // Add this client to the SSE clients map
   if (!SSE_CLIENTS.has(npcId)) {
     SSE_CLIENTS.set(npcId, new Set());
+    logInfo(`Created new SSE client set for ${npcId}`);
   }
   
   const clients = SSE_CLIENTS.get(npcId);
   const clientKey = `${clientId}_${Date.now()}`;
   clients.add(res);
+  logInfo(`Added client ${clientId} to SSE clients for ${npcId}. Total clients: ${clients.size}`);
   
   // Handle client disconnect
   req.on('close', () => {
@@ -390,8 +445,10 @@ app.get('/sse/conversation/:npcId', (req, res) => {
     if (SSE_CLIENTS.has(npcId)) {
       const clients = SSE_CLIENTS.get(npcId);
       clients.delete(res);
+      logInfo(`Removed client ${clientId} from SSE clients for ${npcId}. Remaining clients: ${clients.size}`);
       if (clients.size === 0) {
         SSE_CLIENTS.delete(npcId);
+        logInfo(`Removed empty SSE client set for ${npcId}`);
       }
     }
   });
@@ -451,6 +508,100 @@ function broadcastConversationUpdate(npcId) {
   }
 }
 
+// Function to process response triggers
+function processResponseTriggers(npcId, response) {
+  const session = getOrCreateSession(npcId);
+  const npc = npcs[npcId];
+  
+  logInfo(`Processing response triggers for ${npcId}`);
+  logInfo(`Initial response: ${response}`);
+  
+  if (!npc || !npc.responseTriggers) {
+    logInfo('No response triggers found for NPC');
+    return response;
+  }
+  
+  // Check for motivation appeal
+  if (response.startsWith('<applied to motivation:')) {
+    logInfo('Detected motivation appeal in response');
+    const trigger = npc.responseTriggers.motivationAppeal;
+    if (trigger) {
+      // Extract motivation name
+      const motivationMatch = response.match(/<applied to motivation: (.*?)>/);
+      if (motivationMatch) {
+        const motivation = motivationMatch[1].trim();
+        logInfo(`Extracted motivation: ${motivation}`);
+        
+        // Check if this motivation has already been appealed to
+        if (!session.trackedMotivations) {
+          session.trackedMotivations = [];
+        }
+        
+        if (!session.trackedMotivations.includes(motivation)) {
+          logInfo(`New motivation appeal detected: ${motivation}`);
+          // Process trigger actions
+          trigger.actions.forEach(action => {
+            logInfo(`Processing action: ${JSON.stringify(action)}`);
+            switch (action.type) {
+              case 'sound':
+                logInfo('Attempting to play sound effect');
+                // Emit sound event to connected clients
+                if (SSE_CLIENTS.has(npcId)) {
+                  const clients = SSE_CLIENTS.get(npcId);
+                  logInfo(`Found ${clients.size} connected clients for sound event`);
+                  for (const res of clients) {
+                    try {
+                      res.write('event: sound\n');
+                      res.write(`data: ${JSON.stringify({ effect: action.effect })}\n\n`);
+                      logInfo('Sound event sent successfully');
+                    } catch (error) {
+                      logError('Error sending sound event:', error);
+                    }
+                  }
+                } else {
+                  logInfo('No connected clients found for sound event');
+                }
+                break;
+              case 'stat':
+                if (action.target === 'interest') {
+                  const currentInterest = session.interest || 0;
+                  const newInterest = Math.min(5, currentInterest + action.value);
+                  logInfo(`Updating interest from ${currentInterest} to ${newInterest} for ${npcId}`);
+                  updateSession(npcId, { interest: newInterest });
+                  logInfo(`Broadcasting interest update to clients`);
+                  broadcastAttributeUpdate(npcId, 'interest', newInterest);
+                  logInfo(`Completed interest update broadcast`);
+                }
+                break;
+              case 'track':
+                if (action.target === 'motivations') {
+                  logInfo(`Adding ${motivation} to tracked motivations`);
+                  session.trackedMotivations.push(motivation);
+                  updateSession(npcId, { trackedMotivations: session.trackedMotivations });
+                }
+                break;
+            }
+          });
+        } else {
+          logInfo(`Motivation ${motivation} has already been appealed to`);
+        }
+      } else {
+        logInfo('Failed to extract motivation name from response');
+      }
+    } else {
+      logInfo('No motivation appeal trigger found in NPC config');
+    }
+    
+    // Remove the motivation appeal text from the response
+    const cleanedResponse = response.replace(/<applied to motivation:.*?>\n?/, '');
+    logInfo(`Cleaned response: ${cleanedResponse}`);
+    return cleanedResponse;
+  }
+  
+  logInfo('No motivation appeal detected in response');
+  return response;
+}
+
 // Modified chat endpoint to save messages and broadcast updates
 app.post('/chat/:npcId', async (req, res) => {
   try {
@@ -492,11 +643,14 @@ app.post('/chat/:npcId', async (req, res) => {
       temperature: 0.7
     });
 
-    const npcResponse = completion.choices[0].message.content;
+    let npcResponse = completion.choices[0].message.content;
     logToFile(`GPT Response:\n${npcResponse}`);
 
-    // Update conversation history
-    const updatedHistory = [...conversationHistory, userMessage, { role: "assistant", content: npcResponse }];
+    // Process response triggers and get cleaned response
+    const cleanedResponse = processResponseTriggers(npcId, npcResponse);
+
+    // Update conversation history with cleaned response
+    const updatedHistory = [...conversationHistory, userMessage, { role: "assistant", content: cleanedResponse }];
     
     // Save the updated conversation history in session
     updateSession(npcId, {
@@ -510,7 +664,7 @@ app.post('/chat/:npcId', async (req, res) => {
     broadcastConversationUpdate(npcId);
     
     res.json({ 
-      response: npcResponse,
+      response: cleanedResponse,
       conversationHistory: updatedHistory
     });
   } catch (error) {
@@ -547,7 +701,7 @@ app.get('/conversation/:npcId', (req, res) => {
   }
 });
 
-// Add endpoint to clear conversation history
+// Modify the clear history endpoint to also clear tracked motivations
 app.post('/clear-history/:npcId', (req, res) => {
   try {
     const { npcId } = req.params;
@@ -555,9 +709,10 @@ app.post('/clear-history/:npcId', (req, res) => {
     
     logInfo(`Clear history request for ${npcId} from client ${clientId}`);
     
-    // Update session with empty messages array
+    // Update session with empty messages array and clear tracked motivations
     updateSession(npcId, {
-      messages: []
+      messages: [],
+      trackedMotivations: []
     });
     
     // Broadcast the update to all connected clients
@@ -741,6 +896,45 @@ app.get('/api/events/:npcId', (req, res) => {
   req.on('close', () => {
     clearInterval(heartbeatInterval);
   });
+});
+
+// Add endpoint for setting NPC attitude
+app.post('/api/npc/:npcId/attitude', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const { attitude } = req.body;
+    
+    // Validate attitude
+    if (!npcConfig.attitudes[attitude]) {
+      return res.status(400).json({ error: 'Invalid attitude' });
+    }
+    
+    const session = getOrCreateSession(npcId);
+    const attitudeConfig = npcConfig.attitudes[attitude];
+    
+    // Update session with new attitude and corresponding values
+    const updatedSession = updateSession(npcId, {
+      attitude,
+      patience: attitudeConfig.patience,
+      interest: attitudeConfig.interest
+    });
+    
+    // Broadcast the updates to all connected clients
+    broadcastAttributeUpdate(npcId, 'patience', attitudeConfig.patience);
+    broadcastAttributeUpdate(npcId, 'interest', attitudeConfig.interest);
+    broadcastAttributeUpdate(npcId, 'attitude', attitude);
+    
+    logInfo(`Set attitude for ${npcId} to ${attitude}`);
+    res.json({ 
+      success: true,
+      attitude,
+      patience: updatedSession.patience,
+      interest: updatedSession.interest
+    });
+  } catch (error) {
+    logError('Error setting attitude:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Start the server

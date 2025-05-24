@@ -1268,16 +1268,19 @@ button:hover {
 }
 
 .interest-point {
-  width: 24px;
-  height: 24px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  border: 2px solid #546e7a;
+  border: 2px solid #FFD700;
   transition: background-color 0.3s ease;
 }
 
 .interest-point.active {
-  border-color: transparent;
-  background-color: #4CAF50;  /* Same green color as patience points */
+  background-color: #FFD700;
+}
+
+.interest-points.celebrating:not(.celebrating) {
+  will-change: auto;
 }
 
 .interest-controls {
@@ -1571,5 +1574,36 @@ button:hover {
     height: 20px;
     font-size: 16px;
   }
+}
+
+@keyframes motivationSuccess {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.4);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    box-shadow: 0 0 20px 10px rgba(255, 215, 0, 0.2);
+    transform: translate3d(0, 0, 0) scale(1.1);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.interest-points {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.interest-points.celebrating {
+  animation: motivationSuccess 0.6s ease-out;
+  will-change: transform, box-shadow;
+}
+
+.interest-points.celebrating:not(.celebrating) {
+  will-change: auto;
 }
 

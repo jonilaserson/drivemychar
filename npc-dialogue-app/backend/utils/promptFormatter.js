@@ -13,7 +13,9 @@ function formatPrompt(npcData) {
         .replace('{description}', npcData.description)
         .replace('{personality}', npcData.personality)
         .replace('{currentScene}', npcData.currentScene)
-        .replace('{gameContext}', npcData.gameContext);
+        .replace('{whatTheyKnow}', npcData.whatTheyKnow.join('\n'))
+        .replace('{pitfalls}', npcData.pitfalls.join('\n'))
+        .replace('{motivations}', npcData.motivations.join('\n'));
 
     // Then append the common formatting instructions
     return `${npcPrompt}\n\n${promptConfig.promptFormat.instructions}`;

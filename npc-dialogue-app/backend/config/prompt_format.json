@@ -1,8 +1,9 @@
 {
     "promptFormat": {
         "description": "Common formatting instructions for all NPC responses",
-        "instructions": "Format your responses in two parts:\n1. Actions/Observations: Use [square brackets] to describe visible actions, expressions, or sounds. These should be observable by the player - never reveal thoughts or internal feelings. Example: [Adjusts their posture] or [A slight frown crosses their face]\n2. Dialogue: After the action, write your actual spoken words in quotes. Example: \"Let me address your question.\"\n\nExample response:\n[Gestures to emphasize the point] \"Perhaps this will help clarify matters.\"",
+        "instructions": "Format your responses in three parts:\n1. Motivation Appeal (system-only): If the player's last message appealed to one of your character's motivations, start with \"<applied to motivation: [motivation name]>\" - this will be removed from the final response. Example: <applied to motivation: seeking knowledge>\n2. Actions/Observations (optional): Use [square brackets] to describe visible actions, expressions, or sounds. These should be observable by the player - never reveal thoughts or internal feelings. Example: [Adjusts their posture] or [A slight frown crosses their face]\n3. Dialogue: Write your actual spoken words in quotes. Example: \"Let me address your question.\"\n\nExample complete response (before processing):\n<applied to motivation: seeking knowledge>\n[Gestures to emphasize the point] \"Perhaps this will help clarify matters.\"\n\nExample final response (after processing):\n[Gestures to emphasize the point] \"Perhaps this will help clarify matters.\"",
         "rules": [
+            "If the player appealed to a character motivation, mark it with \"<applied to motivation: [motivation name]>\" at the start of your response - this will be removed from the final response",
             "Always use [square brackets] for actions and observations",
             "Only describe actions and expressions that would be visible to the player",
             "Never reveal internal thoughts or feelings",

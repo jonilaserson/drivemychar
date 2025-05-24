@@ -1,17 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import './App.css';
+import AttitudeSelector from './components/AttitudeSelector';
+
+// Get backend port from environment variable or default to 3000
+const BACKEND_PORT = process.env.REACT_APP_BACKEND_PORT || '3000';
 
 // Use the local network IP address for the backend URL
 const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:3000'
+  ? 'http://localhost:3000'  // Backend always runs on 3000
   : 'http://10.100.102.15:3000';  // Your computer's actual IP address
 
 // Add a unique client ID to identify this instance in logs
 const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
 
 // Add a console log to help debug the URL being used
-console.log('Using backend URL:', BACKEND_URL);
-console.log('Client ID:', CLIENT_ID);
+console.log('[CONFIG] Frontend running on:', window.location.origin);
+console.log('[CONFIG] Backend port:', BACKEND_PORT);
+console.log('[CONFIG] Using backend URL:', BACKEND_URL);
+console.log('[CONFIG] Client ID:', CLIENT_ID);
 
 // Helper function to get color based on value
 function getAttributeColor(value) {
@@ -21,11 +27,43 @@ function getAttributeColor(value) {
   return '#F44336'; // Red
 }
 
+// Move icon components outside App and optimize them with React.memo
+const PatienceIcon = React.memo(() => {
+  return (
+    <img 
+      src="/images/patience-icon.png" 
+      alt="Patience" 
+      className="patience-icon-img"
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain'
+      }}
+    />
+  );
+});
+PatienceIcon.displayName = 'PatienceIcon';
+
+const InterestIcon = React.memo(() => {
+  return (
+    <img 
+      src="/images/interest-icon.png" 
+      alt="Interest" 
+      className="interest-icon-img"
+      style={{
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain'
+      }}
+    />
+  );
+});
+InterestIcon.displayName = 'InterestIcon';
+
 // Generic AttributePoints component to replace both PatiencePoints and InterestPoints
-const AttributePoints = ({ points, maxPoints = 5, activeColor = '#4CAF50', className = 'patience-points' }) => {
-  // Debug log to track rendering
-  console.log(`DEBUGGING: AttributePoints rendering with class=${className}, points=${points}`);
-  
+const AttributePoints = React.memo(({ points, maxPoints = 5, activeColor = '#4CAF50', className = 'patience-points' }) => {
   // Determine color based on total points
   let color = activeColor; 
   if (points <= 1) color = '#F44336'; // Red
@@ -34,7 +72,6 @@ const AttributePoints = ({ points, maxPoints = 5, activeColor = '#4CAF50', class
   
   // Force points to be a number between 0-5
   const safePoints = Math.max(0, Math.min(5, Number(points) || 0));
-  console.log(`DEBUGGING: Safe points value: ${safePoints} (original: ${points})`);
   
   // Create array for the points
   const pointsArray = [...Array(maxPoints)];
@@ -56,53 +93,36 @@ const AttributePoints = ({ points, maxPoints = 5, activeColor = '#4CAF50', class
       })}
     </div>
   );
-};
+});
+AttributePoints.displayName = 'AttributePoints';
 
 // Use AttributePoints for both patience and interest
-const PatiencePoints = (props) => <AttributePoints {...props} className="patience-points" activeColor="#4CAF50" />;
-const InterestPoints = (props) => {
-  console.log('DEBUGGING: Rendering InterestPoints with props', props);
-  return <AttributePoints {...props} className="interest-points" activeColor="#FFD700" />;
-};
+const PatiencePoints = React.memo((props) => <AttributePoints {...props} className="patience-points" activeColor="#4CAF50" />);
+PatiencePoints.displayName = 'PatiencePoints';
 
-// Patience meter icon component
-const PatienceIcon = () => {
-  console.log('Rendering PatienceIcon component');
+const InterestPoints = React.memo((props) => {
+  const [isCelebrating, setIsCelebrating] = useState(false);
+
+  // Add to component's scope
+  useEffect(() => {
+    if (isCelebrating) {
+      const timer = setTimeout(() => setIsCelebrating(false), 600); // Match animation duration
+      return () => clearTimeout(timer);
+    }
+  }, [isCelebrating]);
+
   return (
-    <img 
-      src="/images/patience-icon.png" 
-      alt="Patience" 
-      className="patience-icon-img"
-      style={{
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        objectFit: 'contain'
-      }}
+    <AttributePoints 
+      {...props} 
+      className={`interest-points ${isCelebrating ? 'celebrating' : ''}`} 
+      activeColor="#FFD700" 
     />
   );
-};
-
-// Interest meter icon component
-const InterestIcon = () => {
-  console.log('Rendering InterestIcon component');
-  return (
-    <img 
-      src="/images/interest-icon.png" 
-      alt="Interest" 
-      className="interest-icon-img"
-      style={{
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        objectFit: 'contain'
-      }}
-    />
-  );
-};
+});
+InterestPoints.displayName = 'InterestPoints';
 
 // Generic AttributeTracker component
-const AttributeTracker = ({ label, value, icon, onIncrement, onDecrement, isGmMode }) => {
+const AttributeTracker = React.memo(({ label, value, icon, onIncrement, onDecrement, isGmMode }) => {
   const color = getAttributeColor(value);
   
   return (
@@ -122,12 +142,52 @@ const AttributeTracker = ({ label, value, icon, onIncrement, onDecrement, isGmMo
       <div className="attribute-label">{label}</div>
     </div>
   );
+});
+AttributeTracker.displayName = 'AttributeTracker';
+
+// Add sound effect handling
+const playSound = (effect) => {
+  console.log('[SOUND] Attempting to play:', effect);
+  try {
+    const soundUrl = `/sounds/${effect}.mp3`;
+    console.log('[SOUND] Loading from URL:', soundUrl);
+    
+    // Create and configure audio element
+    const audio = new Audio(soundUrl);
+    audio.volume = 0.5; // Set volume to 50%
+    
+    // Add event listeners for debugging
+    audio.addEventListener('canplaythrough', () => {
+      console.log('[SOUND] Audio loaded and ready to play');
+      audio.play()
+        .then(() => console.log('[SOUND] Playing started successfully'))
+        .catch(error => console.error('[SOUND] Play failed:', error));
+    });
+    
+    audio.addEventListener('error', (e) => {
+      console.error('[SOUND] Audio error:', {
+        error: e.target.error,
+        src: audio.src,
+        readyState: audio.readyState
+      });
+    });
+    
+    // Start loading the audio
+    audio.load();
+    
+  } catch (error) {
+    console.error('[SOUND] Error setting up audio:', error);
+  }
 };
+
+// Create memoized icon instances to prevent recreation
+const PATIENCE_ICON = <PatienceIcon />;
+const INTEREST_ICON = <InterestIcon />;
 
 function App() {
   const [npcs, setNpcs] = useState([]);
   const [selectedNpc, setSelectedNpc] = useState(null);
-  const [input, setInput] = useState('');
+  const [playerInput, setPlayerInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [npcImage, setNpcImage] = useState(null);
@@ -135,13 +195,9 @@ function App() {
   const [retryAfter, setRetryAfter] = useState(null);
   const [conversationHistory, setConversationHistory] = useState([]);
   const conversationHistories = useRef({});  // Store histories by NPC ID
-  const [lastUpdated, setLastUpdated] = useState(null); // Track last conversation update
+  const [lastUpdated, setLastUpdated] = useState(null);
   const sseSourceRef = useRef(null); // Reference to SSE connection
-  const imageCache = useRef({});
-  const imageGenerationTimeout = useRef(null);
   const loadedNpcs = useRef(new Set());  // Track which NPCs we've loaded
-  const [playerInput, setPlayerInput] = useState('');
-  const [npcResponse, setNpcResponse] = useState('');
   const [isGMMode, setIsGMMode] = useState(false);
   const [isSpeechEnabled, setIsSpeechEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -150,30 +206,86 @@ function App() {
   const [showProgress, setShowProgress] = useState(false);
   const autoSubmitTimeout = useRef(null);
   const inputRef = useRef(null);
-  const [voiceSettings, setVoiceSettings] = useState({
-    stability: 0.5,
-    similarity_boost: 0.75,
-    style: 0.0,
-    use_speaker_boost: true
-  });
   const [npcContext, setNpcContext] = useState({
     id: '',
     name: '',
     description: '',
     personality: '',
     currentScene: '',
-    gameContext: ''
+    whatTheyKnow: [],
+    pitfalls: [],
+    motivations: []
   });
   const [selectedNpcId, setSelectedNpcId] = useState('');
   const conversationRef = useRef(null);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const audioCache = useRef({}); // Cache for audio blobs by NPC ID and text
   const [patiencePoints, setPatiencePoints] = useState(5);
   const [interestPoints, setInterestPoints] = useState(3);
+  const [currentAttitude, setCurrentAttitude] = useState('neutral');
+  const [isCelebrating, setIsCelebrating] = useState(false);
+
+  // Create a ref to store the InterestPoints component's celebration function
+  const interestPointsRef = useRef({
+    celebrate: () => {}
+  });
+
+  // Wrap handleSubmit in useCallback
+  const handleSubmit = useCallback(async (e) => {
+    if (e) e.preventDefault();
+    if (!playerInput.trim() || !selectedNpc) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/chat/${selectedNpc.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input: playerInput.trim(),
+          conversationHistory,
+          clientId: CLIENT_ID
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // The server will broadcast the update via SSE
+      // but we'll also update locally for immediate feedback
+      setConversationHistory(data.conversationHistory);
+      conversationHistories.current[selectedNpc.id] = data.conversationHistory;
+      
+      setPlayerInput('');
+      
+      // Speak the NPC's response if speech is enabled
+      if (data.response && isSpeechEnabled) {
+        speakText(data.response);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [playerInput, selectedNpc, conversationHistory, isSpeechEnabled]);
+
+  // Fix useEffect dependencies
+  useEffect(() => {
+    return () => {
+      if (autoSubmitTimeout.current) {
+        clearTimeout(autoSubmitTimeout.current);
+      }
+    };
+  }, []); // Empty dependency array since we only need cleanup
 
   // Function to load and set an image from a URL
   const loadAndSetImage = async (imageUrl, fallbackUrl = null) => {
@@ -340,7 +452,7 @@ function App() {
         clearTimeout(autoSubmitTimeout.current);
       }
     };
-  }, []); // Empty dependency array since we only want to initialize once
+  }, []); // Remove handleSubmit dependency since we use it directly in the callback
 
   const startListening = () => {
     if (recognition) {
@@ -396,90 +508,206 @@ function App() {
     loadNpcs();
   }, [npcs.length]); // Only re-run if npcs.length changes
 
-  // Function to fetch initial conversation data
-  const fetchInitialConversation = async (npcId) => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/conversation/${npcId}?client=${CLIENT_ID}`);
+  // Function to set up SSE event listeners
+  const setupSSEListeners = useCallback((eventSource) => {
+    console.log('[SSE] Setting up event listeners');
+    
+    // Add generic message handler to catch ALL events
+    eventSource.onmessage = (event) => {
+      console.log('[SSE] Generic onmessage received:', {
+        type: event.type,
+        data: event.data,
+        lastEventId: event.lastEventId,
+        origin: event.origin
+      });
       
-      if (!response.ok) {
-        console.error('Error fetching initial conversation:', response.statusText);
-        return;
+      // Try to parse and log the data
+      try {
+        const parsed = JSON.parse(event.data);
+        console.log('[SSE] Parsed generic message data:', parsed);
+      } catch (e) {
+        console.log('[SSE] Non-JSON generic message data:', event.data);
       }
-      
-      const data = await response.json();
-      
-      if (data.conversationHistory && data.conversationHistory.length > 0) {
-        console.log(`Loaded initial conversation data (${data.messageCount} messages)`);
-        setConversationHistory(data.conversationHistory);
-        conversationHistories.current[npcId] = data.conversationHistory;
-        setLastUpdated(data.lastUpdated);
+    };
+    
+    eventSource.addEventListener('connected', (event) => {
+      console.log('[SSE] Connected event received:', event.data);
+    });
+
+    eventSource.addEventListener('attributeUpdate', (event) => {
+      try {
+        console.log('[SSE] attributeUpdate event received:', event);
+        const data = JSON.parse(event.data);
+        console.log('[SSE] Parsed attributeUpdate data:', data);
+        
+        // Batch state updates using React.startTransition for better performance
+        startTransition(() => {
+          if (data.type === 'interest') {
+            console.log('[STATE] Interest update received:', data);
+            setInterestPoints(prevPoints => {
+              const newPoints = data.value;
+              console.log('[STATE] Updating interest points:', {
+                previous: prevPoints,
+                new: newPoints,
+                npcId: selectedNpcId
+              });
+              // If interest increased, trigger celebration
+              if (newPoints > prevPoints) {
+                console.log('[ANIMATION] Triggering interest celebration');
+                setIsCelebrating(true);
+              }
+              return newPoints;
+            });
+          } else if (data.type === 'patience') {
+            setPatiencePoints(prevPoints => {
+              const newPoints = data.value;
+              console.log('[STATE] Updating patience points:', {
+                previous: prevPoints,
+                new: newPoints,
+                npcId: selectedNpcId
+              });
+              return newPoints;
+            });
+          }
+        });
+      } catch (error) {
+        console.error('[SSE] Error processing attributeUpdate:', error);
       }
-    } catch (error) {
-      console.error('Error fetching initial conversation:', error);
-    }
-  };
+    });
+
+    eventSource.addEventListener('sound', (event) => {
+      try {
+        console.log('[SSE] sound event received:', event);
+        const data = JSON.parse(event.data);
+        console.log('[SSE] Parsed sound data:', data);
+        if (data.effect) {
+          const soundUrl = `${window.location.origin}/sounds/${data.effect}.mp3`;
+          console.log('[SOUND] Attempting to play sound from:', soundUrl);
+          
+          const audio = new Audio(soundUrl);
+          audio.volume = 0.5;
+          
+          audio.addEventListener('canplaythrough', () => {
+            console.log('[SOUND] Audio loaded, attempting to play');
+            audio.play()
+              .then(() => console.log('[SOUND] Audio playing successfully'))
+              .catch(err => {
+                console.error('[SOUND] Error playing audio:', err);
+                // Try playing again with user interaction
+                const playOnClick = () => {
+                  audio.play()
+                    .then(() => {
+                      console.log('[SOUND] Audio played after user interaction');
+                      document.removeEventListener('click', playOnClick);
+                    })
+                    .catch(err => console.error('[SOUND] Error playing audio after user interaction:', err));
+                };
+                document.addEventListener('click', playOnClick, { once: true });
+              });
+          });
+          
+          audio.addEventListener('error', (err) => {
+            console.error('[SOUND] Audio loading error:', err, 'URL was:', soundUrl);
+          });
+          
+          audio.load();
+        }
+      } catch (error) {
+        console.error('[SSE] Error processing sound event:', error);
+      }
+    });
+
+    eventSource.addEventListener('update', (event) => {
+      try {
+        console.log('[SSE] Received update event:', event);
+        const data = JSON.parse(event.data);
+        console.log('[SSE] Parsed update data:', data);
+        
+        // Batch all state updates together for better performance
+        startTransition(() => {
+          if (data.session) {
+            if (data.session.interest !== undefined) {
+              setInterestPoints(currentInterest => {
+                if (currentInterest !== data.session.interest) {
+                  console.log('[STATE] Interest update from session:', {
+                    previous: currentInterest,
+                    new: data.session.interest,
+                    npcId: selectedNpcId
+                  });
+                }
+                return data.session.interest;
+              });
+            }
+            if (data.session.patience !== undefined) {
+              setPatiencePoints(currentPatience => {
+                if (currentPatience !== data.session.patience) {
+                  console.log('[STATE] Patience update from session:', {
+                    previous: currentPatience,
+                    new: data.session.patience,
+                    npcId: selectedNpcId
+                  });
+                }
+                return data.session.patience;
+              });
+            }
+          }
+          
+          if (data.conversationHistory) {
+            setConversationHistory(prevHistory => {
+              if (prevHistory.length !== data.conversationHistory.length) {
+                console.log('[STATE] Updating conversation history:', {
+                  messageCount: data.conversationHistory.length,
+                  npcId: selectedNpcId
+                });
+                conversationHistories.current[selectedNpcId] = data.conversationHistory;
+              }
+              return data.conversationHistory;
+            });
+          }
+        });
+      } catch (error) {
+        console.error('[SSE] Error processing update event:', error);
+      }
+    });
+
+    // Debug event stream state changes
+    eventSource.addEventListener('open', (event) => {
+      console.log('[SSE] Connection opened:', event);
+    });
+
+    eventSource.addEventListener('error', (event) => {
+      console.error('[SSE] Error event received:', event);
+    });
+  }, [selectedNpcId]);
 
   // Setup SSE connection when NPC is selected
   useEffect(() => {
     if (!selectedNpcId) return;
     
-    console.log(`Setting up SSE connection for ${selectedNpcId}`);
+    console.log(`[SSE] Setting up connection for NPC ${selectedNpcId}`);
     
     // Close any existing SSE connection
     if (sseSourceRef.current) {
-      console.log('Closing previous SSE connection');
+      console.log('[SSE] Closing previous connection');
       sseSourceRef.current.close();
       sseSourceRef.current = null;
     }
     
     // Create a new SSE connection
-    const timestamp = Date.now(); // Add timestamp to prevent caching
-    const eventSource = new EventSource(`${BACKEND_URL}/api/events/${selectedNpcId}`);
+    const eventSource = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}`);
+    console.log(`[SSE] Created new EventSource for ${selectedNpcId}`);
     sseSourceRef.current = eventSource;
     
-    // Listen for all event types
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('SSE event received:', data);
-        
-        if (data.type === 'initialState') {
-          setPatiencePoints(data.patience);
-          setInterestPoints(data.interest);
-        } else if (data.type === 'patienceUpdate') {
-          setPatiencePoints(data.patience);
-        } else if (data.type === 'interestUpdate') {
-          setInterestPoints(data.interest);
-        } else if (data.type === 'update' && data.conversationHistory) {
-          setConversationHistory(data.conversationHistory);
-          conversationHistories.current[selectedNpcId] = data.conversationHistory;
-          setLastUpdated(data.lastUpdated);
-        }
-      } catch (error) {
-        console.error('Error processing SSE event:', error);
-      }
-    };
-    
-    // Handle errors
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      // Try to reconnect after 5 seconds if connection fails
-      if (eventSource.readyState === EventSource.CLOSED) {
-        setTimeout(() => {
-          console.log('Attempting to reconnect SSE...');
-          eventSource.close();
-          sseSourceRef.current = new EventSource(`${BACKEND_URL}/api/events/${selectedNpcId}`);
-        }, 5000);
-      }
-    };
+    // Set up all event listeners
+    setupSSEListeners(eventSource);
     
     // Cleanup on unmount or when NPC changes
     return () => {
-      console.log('Closing SSE connection due to unmount or NPC change');
+      console.log('[SSE] Cleaning up connection for', selectedNpcId);
       eventSource.close();
       sseSourceRef.current = null;
     };
-  }, [selectedNpcId]);
+  }, [selectedNpcId, setupSSEListeners]);
 
   // Load NPC context when selected NPC changes
   useEffect(() => {
@@ -494,9 +722,17 @@ function App() {
         setSelectedNpc(data);
         setNpcContext(data);
         
-        // Set patience from session if available
-        if (data.session && data.session.patience !== undefined) {
-          setPatiencePoints(data.session.patience);
+        // Set attitude and attributes from session if available
+        if (data.session) {
+          if (data.session.attitude) {
+            setCurrentAttitude(data.session.attitude);
+          }
+          if (data.session.patience !== undefined) {
+            setPatiencePoints(data.session.patience);
+          }
+          if (data.session.interest !== undefined) {
+            setInterestPoints(data.session.interest);
+          }
         }
         
         // Use server-side conversation history if available
@@ -544,10 +780,6 @@ function App() {
     loadSelectedNpc();
   }, [selectedNpcId]); // Only re-run when selectedNpcId changes
 
-  const handleInputChange = (e) => {
-    setPlayerInput(e.target.value);
-  };
-
   const handleContextChange = (e) => {
     const { name, value } = e.target;
     setNpcContext(prev => ({
@@ -556,151 +788,30 @@ function App() {
     }));
   };
 
-  const handleSubmit = async (e) => {
-    if (e) e.preventDefault();
-    if (!playerInput.trim() || !selectedNpc) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/chat/${selectedNpc.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          input: playerInput.trim(),
-          conversationHistory,
-          clientId: CLIENT_ID
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // The server will broadcast the update via SSE
-      // but we'll also update locally for immediate feedback
-      setConversationHistory(data.conversationHistory);
-      conversationHistories.current[selectedNpc.id] = data.conversationHistory;
-      
-      setPlayerInput('');
-      
-      // Speak the NPC's response if speech is enabled
-      if (data.response && isSpeechEnabled) {
-        speakText(data.response);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleClearHistory = async () => {
-    if (!selectedNpc) return;
-    
-    try {
-      console.log('Clearing conversation history for', selectedNpc.id);
-      
-      // 1. Close any existing SSE connection to ensure we get a fresh one after clearing
-      if (sseSourceRef.current) {
-        console.log('Closing SSE connection before clearing history');
-        sseSourceRef.current.close();
-        sseSourceRef.current = null;
-      }
-      
-      // 2. Update local state immediately for responsive UI
-      setConversationHistory([]);
-      conversationHistories.current[selectedNpc.id] = [];
-      
-      // 3. Send clear request to server
-      const response = await fetch(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to clear conversation history');
-      }
-      
-      // 4. Reload the context and conversation just to be sure
-      const contextResponse = await fetch(`${BACKEND_URL}/context/${selectedNpc.id}`);
-      const contextData = await contextResponse.json();
-      
-      if (contextData.conversationHistory) {
-        // This should be empty now
-        setConversationHistory(contextData.conversationHistory);
-        conversationHistories.current[selectedNpc.id] = contextData.conversationHistory;
-      }
-      
-      // 5. Force a new SSE connection to get fresh updates
-      const timestamp = Date.now();
-      sseSourceRef.current = new EventSource(
-        `${BACKEND_URL}/sse/conversation/${selectedNpc.id}?client=${CLIENT_ID}&t=${timestamp}`
-      );
-      
-      // Set up event listeners again
-      sseSourceRef.current.addEventListener('update', (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log(`Fresh SSE: Received conversation update (${data.messageCount || 0} messages)`);
-          setConversationHistory(data.conversationHistory || []);
-          conversationHistories.current[selectedNpc.id] = data.conversationHistory || [];
-          
-          // Update patience points from percentage
-          if (data.session && data.session.patience !== undefined) {
-            setPatiencePoints(data.session.patience);
-          }
-        } catch (error) {
-          console.error('Error processing SSE update after clear:', error);
-        }
-      });
-      
-      console.log('Conversation history cleared successfully');
-    } catch (err) {
-      console.error('Error clearing conversation history:', err);
-      setError('Failed to clear conversation history');
-    }
-  };
-
   const handleContextSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedNpc) return;
+    
     setIsLoadingContext(true);
-    setError(null);
-
     try {
-      const response = await fetch(`${BACKEND_URL}/context/${npcContext.id}`, {
+      const response = await fetch(`${BACKEND_URL}/context/${selectedNpc.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(npcContext),
+        body: JSON.stringify(npcContext)
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to update NPC context');
+        throw new Error('Failed to update NPC context');
       }
 
       const data = await response.json();
-      
-      // Update both the selected NPC and NPCs list with new data
+      setNpcContext(data);
       setSelectedNpc(data);
-      setNpcs(prevNpcs => prevNpcs.map(npc => 
-        npc.id === data.id ? { ...npc, ...data } : npc
-      ));
-
-      alert('NPC context updated successfully!');
     } catch (error) {
-      console.error('Error updating context:', error);
-      setError(error.message || 'Failed to update NPC context');
-      alert('Failed to update NPC context: ' + error.message);
+      console.error('Error updating NPC context:', error);
+      setError('Failed to update NPC context');
     } finally {
       setIsLoadingContext(false);
     }
@@ -802,6 +913,102 @@ function App() {
   const adjustPatience = (adjustment) => adjustAttribute('patience', adjustment);
   const adjustInterest = (adjustment) => adjustAttribute('interest', adjustment);
 
+  // Add handler for attitude changes
+  const handleAttitudeChange = async (newAttitude) => {
+    if (!selectedNpc) return;
+    
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/npc/${selectedNpc.id}/attitude`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ attitude: newAttitude })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update attitude');
+      }
+
+      const data = await response.json();
+      setCurrentAttitude(data.attitude);
+      setPatiencePoints(data.patience);
+      setInterestPoints(data.interest);
+    } catch (error) {
+      console.error('Error updating attitude:', error);
+      setError('Failed to update NPC attitude');
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (!selectedNpc) return;
+    
+    try {
+      console.log('Clearing conversation history for', selectedNpc.id);
+      
+      // 1. Close any existing SSE connection to ensure we get a fresh one after clearing
+      if (sseSourceRef.current) {
+        console.log('Closing SSE connection before clearing history');
+        sseSourceRef.current.close();
+        sseSourceRef.current = null;
+      }
+      
+      // 2. Update local state immediately for responsive UI
+      setConversationHistory([]);
+      conversationHistories.current[selectedNpc.id] = [];
+      
+      // 3. Send clear request to server
+      const response = await fetch(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear conversation history');
+      }
+      
+      // 4. Reload the context and conversation just to be sure
+      const contextResponse = await fetch(`${BACKEND_URL}/context/${selectedNpc.id}`);
+      const contextData = await contextResponse.json();
+      
+      if (contextData.conversationHistory) {
+        // This should be empty now
+        setConversationHistory(contextData.conversationHistory);
+        conversationHistories.current[selectedNpc.id] = contextData.conversationHistory;
+      }
+      
+      // 5. Force a new SSE connection to get fresh updates
+      const timestamp = Date.now();
+      sseSourceRef.current = new EventSource(
+        `${BACKEND_URL}/sse/conversation/${selectedNpc.id}?client=${CLIENT_ID}&t=${timestamp}`
+      );
+      
+      // Set up event listeners again
+      sseSourceRef.current.addEventListener('update', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log(`Fresh SSE: Received conversation update (${data.messageCount || 0} messages)`);
+          setConversationHistory(data.conversationHistory || []);
+          conversationHistories.current[selectedNpc.id] = data.conversationHistory || [];
+          
+          // Update patience points from percentage
+          if (data.session && data.session.patience !== undefined) {
+            setPatiencePoints(data.session.patience);
+          }
+        } catch (error) {
+          console.error('Error processing SSE update after clear:', error);
+        }
+      });
+      
+      console.log('Conversation history cleared successfully');
+    } catch (err) {
+      console.error('Error clearing conversation history:', err);
+      setError('Failed to clear conversation history');
+    }
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -874,7 +1081,7 @@ function App() {
                 <AttributeTracker
                   label="Patience"
                   value={patiencePoints}
-                  icon={<PatienceIcon />}
+                  icon={PATIENCE_ICON}
                   onIncrement={() => adjustPatience(1)}
                   onDecrement={() => adjustPatience(-1)}
                   isGmMode={isGMMode}
@@ -883,7 +1090,7 @@ function App() {
                 <AttributeTracker
                   label="Interest"
                   value={interestPoints}
-                  icon={<InterestIcon />}
+                  icon={INTEREST_ICON}
                   onIncrement={() => adjustInterest(1)}
                   onDecrement={() => adjustInterest(-1)}
                   isGmMode={isGMMode}
@@ -900,7 +1107,7 @@ function App() {
                 <AttributeTracker
                   label="Patience"
                   value={patiencePoints}
-                  icon={<PatienceIcon />}
+                  icon={PATIENCE_ICON}
                   onIncrement={() => adjustPatience(1)}
                   onDecrement={() => adjustPatience(-1)}
                   isGmMode={isGMMode}
@@ -909,7 +1116,7 @@ function App() {
                 <AttributeTracker
                   label="Interest"
                   value={interestPoints}
-                  icon={<InterestIcon />}
+                  icon={INTEREST_ICON}
                   onIncrement={() => adjustInterest(1)}
                   onDecrement={() => adjustInterest(-1)}
                   isGmMode={isGMMode}
@@ -983,12 +1190,45 @@ function App() {
               />
             </div>
             <div className="form-group">
-              <label>Game Context:</label>
+              <label>What They Know:</label>
               <textarea
-                name="gameContext"
-                value={npcContext.gameContext}
-                onChange={handleContextChange}
-                placeholder="Additional game context, setting, or relevant information"
+                name="whatTheyKnow"
+                value={npcContext.whatTheyKnow.join('\n')}
+                onChange={(e) => handleContextChange({
+                  target: {
+                    name: 'whatTheyKnow',
+                    value: e.target.value.split('\n').filter(line => line.trim())
+                  }
+                })}
+                placeholder="Enter each piece of knowledge on a new line"
+              />
+            </div>
+            <div className="form-group">
+              <label>Pitfalls:</label>
+              <textarea
+                name="pitfalls"
+                value={npcContext.pitfalls.join('\n')}
+                onChange={(e) => handleContextChange({
+                  target: {
+                    name: 'pitfalls',
+                    value: e.target.value.split('\n').filter(line => line.trim())
+                  }
+                })}
+                placeholder="Enter each pitfall on a new line"
+              />
+            </div>
+            <div className="form-group">
+              <label>Motivations:</label>
+              <textarea
+                name="motivations"
+                value={npcContext.motivations.join('\n')}
+                onChange={(e) => handleContextChange({
+                  target: {
+                    name: 'motivations',
+                    value: e.target.value.split('\n').filter(line => line.trim())
+                  }
+                })}
+                placeholder="Enter each motivation on a new line"
               />
             </div>
             <div className="form-actions">
@@ -1042,7 +1282,9 @@ function App() {
               />
               {showProgress && <div className="auto-submit-progress" />}
             </div>
-            <button type="submit">Send</button>
+            <button type="submit" disabled={isLoading}>
+              {isLoading ? 'Sending...' : 'Send'}
+            </button>
             <button 
               type="button" 
               className={`voice-input-button ${isListening ? 'listening' : ''}`}
@@ -1057,6 +1299,13 @@ function App() {
           </form>
         </div>
       )}
+
+      {/* Add AttitudeSelector before the existing interface */}
+      <AttitudeSelector
+        currentAttitude={currentAttitude}
+        onAttitudeChange={handleAttitudeChange}
+        isGMMode={isGMMode}
+      />
     </div>
   );
 }
