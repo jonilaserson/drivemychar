@@ -2,13 +2,21 @@ import React, { useState, useEffect, useRef, useCallback, startTransition } from
 import './App.css';
 import AttitudeSelector from './components/AttitudeSelector';
 
+// Suppress Chrome extension errors
+window.addEventListener('error', (event) => {
+  if (event.message.includes('Receiving end does not exist')) {
+    event.preventDefault(); // Prevent the error from appearing in console
+    return false;
+  }
+}, true);
+
 // Get backend port from environment variable or default to 3000
 const BACKEND_PORT = process.env.REACT_APP_BACKEND_PORT || '3000';
 
-// Use the local network IP address for the backend URL
-const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:3000'  // Backend always runs on 3000
-  : 'http://10.100.102.15:3000';  // Your computer's actual IP address
+// Use environment variable to control backend URL, default to deployed
+const BACKEND_URL = process.env.REACT_APP_USE_LOCAL_BACKEND === 'true'
+  ? `http://localhost:${BACKEND_PORT}`  // Local development backend
+  : 'https://drivemychar.onrender.com';  // Deployed backend URL
 
 // Add a unique client ID to identify this instance in logs
 const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
@@ -145,46 +153,12 @@ const AttributeTracker = React.memo(({ label, value, icon, onIncrement, onDecrem
 });
 AttributeTracker.displayName = 'AttributeTracker';
 
-// Add sound effect handling
-const playSound = (effect) => {
-  console.log('[SOUND] Attempting to play:', effect);
-  try {
-    const soundUrl = `/sounds/${effect}.mp3`;
-    console.log('[SOUND] Loading from URL:', soundUrl);
-    
-    // Create and configure audio element
-    const audio = new Audio(soundUrl);
-    audio.volume = 0.5; // Set volume to 50%
-    
-    // Add event listeners for debugging
-    audio.addEventListener('canplaythrough', () => {
-      console.log('[SOUND] Audio loaded and ready to play');
-      audio.play()
-        .then(() => console.log('[SOUND] Playing started successfully'))
-        .catch(error => console.error('[SOUND] Play failed:', error));
-    });
-    
-    audio.addEventListener('error', (e) => {
-      console.error('[SOUND] Audio error:', {
-        error: e.target.error,
-        src: audio.src,
-        readyState: audio.readyState
-      });
-    });
-    
-    // Start loading the audio
-    audio.load();
-    
-  } catch (error) {
-    console.error('[SOUND] Error setting up audio:', error);
-  }
-};
-
 // Create memoized icon instances to prevent recreation
 const PATIENCE_ICON = <PatienceIcon />;
 const INTEREST_ICON = <InterestIcon />;
 
 function App() {
+  // State declarations
   const [npcs, setNpcs] = useState([]);
   const [selectedNpc, setSelectedNpc] = useState(null);
   const [playerInput, setPlayerInput] = useState('');
@@ -192,20 +166,27 @@ function App() {
   const [error, setError] = useState(null);
   const [npcImage, setNpcImage] = useState(null);
   const [imageError, setImageError] = useState(null);
-  const [retryAfter, setRetryAfter] = useState(null);
   const [conversationHistory, setConversationHistory] = useState([]);
-  const conversationHistories = useRef({});  // Store histories by NPC ID
   const [lastUpdated, setLastUpdated] = useState(null);
-  const sseSourceRef = useRef(null); // Reference to SSE connection
-  const loadedNpcs = useRef(new Set());  // Track which NPCs we've loaded
   const [isGMMode, setIsGMMode] = useState(false);
   const [isSpeechEnabled, setIsSpeechEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [recognition, setRecognition] = useState(null);
   const [showProgress, setShowProgress] = useState(false);
+  const [isCelebrating, setIsCelebrating] = useState(false);
+  const [retryAfter, setRetryAfter] = useState(null);
+  
+  // Refs
+  const conversationHistories = useRef({});
+  const sseSourceRef = useRef(null);
+  const loadedNpcs = useRef(new Set());
   const autoSubmitTimeout = useRef(null);
   const inputRef = useRef(null);
+  const conversationRef = useRef(null);
+  const audioCache = useRef({});
+  
+  // NPC state
   const [npcContext, setNpcContext] = useState({
     id: '',
     name: '',
@@ -217,23 +198,68 @@ function App() {
     motivations: []
   });
   const [selectedNpcId, setSelectedNpcId] = useState('');
-  const conversationRef = useRef(null);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
-  const audioCache = useRef({}); // Cache for audio blobs by NPC ID and text
   const [patiencePoints, setPatiencePoints] = useState(5);
   const [interestPoints, setInterestPoints] = useState(3);
   const [currentAttitude, setCurrentAttitude] = useState('neutral');
-  const [isCelebrating, setIsCelebrating] = useState(false);
 
-  // Create a ref to store the InterestPoints component's celebration function
-  const interestPointsRef = useRef({
-    celebrate: () => {}
-  });
+  // Define speakText first since it's used in handleSubmit
+  const speakText = useCallback(async (text, npcId = null) => {
+    if (!isSpeechEnabled) return;
+    
+    try {
+      setIsSpeaking(true);
+      const currentNpcId = npcId || npcContext.id || 'eldrin';
+      
+      const cacheKey = `${currentNpcId}:${text}`;
+      if (audioCache.current[cacheKey]) {
+        console.log('Using cached audio');
+        const audio = new Audio(audioCache.current[cacheKey]);
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = (e) => {
+          console.error('Audio playback error:', e);
+          setIsSpeaking(false);
+        };
+        await audio.play();
+        return;
+      }
 
-  // Wrap handleSubmit in useCallback
+      console.log('Fetching new audio from API');
+      const response = await fetch(`${BACKEND_URL}/speak/${currentNpcId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate speech');
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      audioCache.current[cacheKey] = audioUrl;
+      
+      const audio = new Audio(audioUrl);
+      audio.onended = () => setIsSpeaking(false);
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
+        setIsSpeaking(false);
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error('Error speaking text:', error);
+      setIsSpeaking(false);
+    }
+  }, [isSpeechEnabled, npcContext.id]);
+
+  // Define handleSubmit before it's used in any hooks
   const handleSubmit = useCallback(async (e) => {
     if (e) e.preventDefault();
     if (!playerInput.trim() || !selectedNpc) return;
@@ -260,14 +286,11 @@ function App() {
         throw new Error(data.error);
       }
 
-      // The server will broadcast the update via SSE
-      // but we'll also update locally for immediate feedback
       setConversationHistory(data.conversationHistory);
       conversationHistories.current[selectedNpc.id] = data.conversationHistory;
       
       setPlayerInput('');
       
-      // Speak the NPC's response if speech is enabled
       if (data.response && isSpeechEnabled) {
         speakText(data.response);
       }
@@ -276,16 +299,103 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [playerInput, selectedNpc, conversationHistory, isSpeechEnabled]);
+  }, [playerInput, selectedNpc, conversationHistory, isSpeechEnabled, speakText]);
 
-  // Fix useEffect dependencies
+  // Input handlers
+  const handleInputFocus = useCallback(() => {
+    if (autoSubmitTimeout.current) {
+      clearTimeout(autoSubmitTimeout.current);
+      setShowProgress(false);
+    }
+  }, []);
+
+  // Speech recognition handlers
+  const startListening = useCallback(() => {
+    if (recognition) {
+      try {
+        recognition.start();
+        console.log('Starting speech recognition');
+      } catch (error) {
+        console.error('Error starting speech recognition:', error);
+        if (error.name === 'InvalidStateError') {
+          recognition.stop();
+          setTimeout(() => recognition.start(), 100);
+        }
+      }
+    } else {
+      console.log('Speech recognition not available');
+      alert('Speech recognition is not supported in your browser.');
+    }
+  }, [recognition]);
+
+  const stopListening = useCallback(() => {
+    if (recognition) {
+      recognition.stop();
+      console.log('Stopping speech recognition');
+    }
+  }, [recognition]);
+
+  // Now you can use handleSubmit in your useEffect hooks
   useEffect(() => {
+    // Check for both standard and webkit prefixed version
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        console.log('Speech recognition started');
+        setIsListening(true);
+        setShowProgress(false);
+      };
+
+      recognition.onend = () => {
+        console.log('Speech recognition ended');
+        setIsListening(false);
+      };
+
+      recognition.onresult = (event) => {
+        console.log('Speech recognition result received');
+        const transcript = event.results[0][0].transcript;
+        setPlayerInput(transcript);
+        
+        if (autoSubmitTimeout.current) {
+          clearTimeout(autoSubmitTimeout.current);
+        }
+
+        setShowProgress(true);
+        autoSubmitTimeout.current = setTimeout(() => {
+          console.log('Auto-submitting transcript:', transcript);
+          setShowProgress(false);
+          const syntheticEvent = { preventDefault: () => {} };
+          handleSubmit(syntheticEvent);
+        }, 3000);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        setShowProgress(false);
+        if (event.error === 'not-allowed') {
+          alert('Please enable microphone access to use voice input.');
+        }
+      };
+
+      setRecognition(recognition);
+    } else {
+      console.log('Speech recognition not supported');
+      setIsSpeechEnabled(false);
+    }
+
     return () => {
       if (autoSubmitTimeout.current) {
         clearTimeout(autoSubmitTimeout.current);
       }
     };
-  }, []); // Empty dependency array since we only need cleanup
+  }, [handleSubmit]);
 
   // Function to load and set an image from a URL
   const loadAndSetImage = async (imageUrl, fallbackUrl = null) => {
@@ -323,168 +433,6 @@ function App() {
         return true;
       }
       return false;
-    }
-  };
-
-  // Function to speak text using ElevenLabs
-  const speakText = async (text, npcId = null) => {
-    if (!isSpeechEnabled) return;
-    
-    try {
-      setIsSpeaking(true);
-      
-      // Use provided npcId or fall back to current NPC
-      const currentNpcId = npcId || npcContext.id || 'eldrin';
-      
-      // Check cache first
-      const cacheKey = `${currentNpcId}:${text}`;
-      if (audioCache.current[cacheKey]) {
-        console.log('Using cached audio');
-        const audio = new Audio(audioCache.current[cacheKey]);
-        audio.onended = () => setIsSpeaking(false);
-        audio.onerror = (e) => {
-          console.error('Audio playback error:', e);
-          setIsSpeaking(false);
-        };
-        await audio.play();
-        return;
-      }
-
-      console.log('Fetching new audio from API');
-      const response = await fetch(`${BACKEND_URL}/speak/${currentNpcId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to generate speech');
-      }
-
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      
-      // Cache the audio URL
-      audioCache.current[cacheKey] = audioUrl;
-      
-      const audio = new Audio(audioUrl);
-      audio.onended = () => {
-        setIsSpeaking(false);
-      };
-
-      audio.onerror = (e) => {
-        console.error('Audio playback error:', e);
-        setIsSpeaking(false);
-      };
-
-      await audio.play();
-    } catch (error) {
-      console.error('Error speaking text:', error);
-      setIsSpeaking(false);
-    }
-  };
-
-  // Initialize speech recognition
-  useEffect(() => {
-    // Check for both standard and webkit prefixed version
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        console.log('Speech recognition started');
-        setIsListening(true);
-        setShowProgress(false); // Reset progress when starting new recognition
-      };
-
-      recognition.onend = () => {
-        console.log('Speech recognition ended');
-        setIsListening(false);
-      };
-
-      recognition.onresult = (event) => {
-        console.log('Speech recognition result received');
-        const transcript = event.results[0][0].transcript;
-        setPlayerInput(transcript);
-        
-        // Clear any existing timeout
-        if (autoSubmitTimeout.current) {
-          clearTimeout(autoSubmitTimeout.current);
-        }
-
-        // Start auto-submit countdown
-        setShowProgress(true);
-        autoSubmitTimeout.current = setTimeout(() => {
-          console.log('Auto-submitting transcript:', transcript);
-          setShowProgress(false);
-          // Create a synthetic event for handleSubmit
-          const syntheticEvent = { preventDefault: () => {} };
-          handleSubmit(syntheticEvent);
-        }, 3000);
-      };
-
-      recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        setShowProgress(false);
-        if (event.error === 'not-allowed') {
-          alert('Please enable microphone access to use voice input.');
-        }
-      };
-
-      setRecognition(recognition);
-    } else {
-      console.log('Speech recognition not supported');
-      // Disable the microphone button if speech recognition is not supported
-      setIsSpeechEnabled(false);
-    }
-
-    // Cleanup function
-    return () => {
-      if (autoSubmitTimeout.current) {
-        clearTimeout(autoSubmitTimeout.current);
-      }
-    };
-  }, []); // Remove handleSubmit dependency since we use it directly in the callback
-
-  const startListening = () => {
-    if (recognition) {
-      try {
-        recognition.start();
-        console.log('Starting speech recognition');
-      } catch (error) {
-        console.error('Error starting speech recognition:', error);
-        // If recognition is already started, stop it and start again
-        if (error.name === 'InvalidStateError') {
-          recognition.stop();
-          setTimeout(() => recognition.start(), 100);
-        }
-      }
-    } else {
-      console.log('Speech recognition not available');
-      alert('Speech recognition is not supported in your browser.');
-    }
-  };
-
-  const stopListening = () => {
-    if (recognition) {
-      recognition.stop();
-      console.log('Stopping speech recognition');
-    }
-  };
-
-  // Handle input focus/blur
-  const handleInputFocus = () => {
-    if (autoSubmitTimeout.current) {
-      clearTimeout(autoSubmitTimeout.current);
-      setShowProgress(false);
     }
   };
 
@@ -693,19 +641,48 @@ function App() {
       sseSourceRef.current = null;
     }
     
-    // Create a new SSE connection
-    const eventSource = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}`);
-    console.log(`[SSE] Created new EventSource for ${selectedNpcId}`);
-    sseSourceRef.current = eventSource;
+    // Create a new SSE connection with error handling
+    const connectSSE = () => {
+      try {
+        const eventSource = new EventSource(`${BACKEND_URL}/sse/conversation/${selectedNpcId}?client=${CLIENT_ID}`);
+        console.log(`[SSE] Created new EventSource for ${selectedNpcId}`);
+        sseSourceRef.current = eventSource;
+        
+        // Set up all event listeners
+        setupSSEListeners(eventSource);
+        
+        // Add specific error handling
+        eventSource.onerror = (error) => {
+          console.warn('[SSE] Error event:', error);
+          
+          // Ignore Chrome extension errors
+          if (error.message?.includes('Receiving end does not exist')) {
+            return;
+          }
+          
+          // Handle disconnection
+          if (eventSource.readyState === EventSource.CLOSED) {
+            console.log('[SSE] Connection closed, attempting to reconnect...');
+            setTimeout(connectSSE, 1000); // Reconnect after 1 second
+          }
+        };
+      } catch (error) {
+        console.error('[SSE] Setup error:', error);
+        // Attempt to reconnect on setup error
+        setTimeout(connectSSE, 1000);
+      }
+    };
     
-    // Set up all event listeners
-    setupSSEListeners(eventSource);
+    // Initial connection
+    connectSSE();
     
     // Cleanup on unmount or when NPC changes
     return () => {
       console.log('[SSE] Cleaning up connection for', selectedNpcId);
-      eventSource.close();
-      sseSourceRef.current = null;
+      if (sseSourceRef.current) {
+        sseSourceRef.current.close();
+        sseSourceRef.current = null;
+      }
     };
   }, [selectedNpcId, setupSSEListeners]);
 
@@ -746,10 +723,11 @@ function App() {
         } else {
           // Reset conversation history for this NPC if no server history
           if (!loadedNpcs.current.has(selectedNpcId)) {
-              conversationHistories.current[selectedNpcId] = [];
-              loadedNpcs.current.add(selectedNpcId);
+            conversationHistories.current[selectedNpcId] = [];
+            loadedNpcs.current.add(selectedNpcId);
           }
           setConversationHistory(conversationHistories.current[selectedNpcId] || []);
+          setLastUpdated(new Date().toISOString());
         }
         
         // Reset image state
@@ -778,7 +756,7 @@ function App() {
     };
 
     loadSelectedNpc();
-  }, [selectedNpcId]); // Only re-run when selectedNpcId changes
+  }, [selectedNpcId]); // Dependencies
 
   const handleContextChange = (e) => {
     const { name, value } = e.target;
@@ -1013,6 +991,17 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>DriveMyChar</h1>
+        {error && (
+          <div className="error-message" style={{ 
+            color: 'red', 
+            padding: '10px', 
+            margin: '10px 0',
+            backgroundColor: 'rgba(255,0,0,0.1)',
+            borderRadius: '4px'
+          }}>
+            Error: {error}
+          </div>
+        )}
         <div className="header-controls">
           <select 
             value={selectedNpcId} 
