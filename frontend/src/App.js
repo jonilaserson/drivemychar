@@ -15,7 +15,7 @@ const BACKEND_PORT = process.env.REACT_APP_BACKEND_PORT || '3000';
 
 // Use environment variable to control backend URL, default to deployed
 const BACKEND_URL = process.env.REACT_APP_USE_LOCAL_BACKEND === 'true'
-  ? `http://localhost:${BACKEND_PORT}`  // Local development backend
+  ? `http://${window.location.hostname}:${BACKEND_PORT}`  // Use the server's IP address
   : 'https://drivemychar.onrender.com';  // Deployed backend URL
 
 // Add a unique client ID to identify this instance in logs

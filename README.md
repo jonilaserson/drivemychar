@@ -46,6 +46,47 @@ cd frontend && npm start
 
 The application will be available at http://localhost:3000
 
+## Running in Different Modes
+
+### Local Development (Frontend and Backend)
+1. Start the backend server:
+```bash
+cd npc-dialogue-app/backend
+node server.js
+```
+
+2. In a new terminal, start the frontend development server with local backend:
+```bash
+cd frontend
+PORT=3001 REACT_APP_USE_LOCAL_BACKEND=true npm start
+```
+
+The frontend will be available at http://localhost:3001 and will connect to the local backend at http://localhost:3000
+
+### Accessing from Other Machines on the Network
+When running locally, you can access the application from other machines on the same network:
+
+1. Find your machine's IP address (e.g., 192.168.1.100 or 10.100.102.15)
+2. Start the backend server as usual
+3. Start the frontend with:
+```bash
+cd frontend
+PORT=3001 REACT_APP_USE_LOCAL_BACKEND=true npm start
+```
+4. Access the frontend from other machines using:
+   - Frontend: http://YOUR_IP:3001
+   - Backend: http://YOUR_IP:3000
+
+### Using the Hosted Server
+To run the frontend against the production backend:
+
+```bash
+cd frontend
+npm start
+```
+
+This will connect to the hosted backend at https://drivemychar.onrender.com
+
 ## Features
 
 - Interactive dialogue with NPCs using GPT-4
