@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "cloudinary": "^2.6.1",
     "openai": "^4.89.0"
   }
 }

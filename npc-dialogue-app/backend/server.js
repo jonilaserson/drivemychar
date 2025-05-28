@@ -9,6 +9,18 @@ const { formatPrompt } = require('./utils/promptFormatter');
 const { checkRateLimit } = require('./utils/rateLimiter');
 const { logRequest, logError, logInfo } = require('./utils/logger');
 
+// Add Cloudinary configuration
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary
+cloudinary.config({ 
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+console.log('Cloudinary configured with cloud name:', process.env.CLOUDINARY_CLOUD_NAME);
+
 const app = express();
 
 // Ensure all required directories exist
@@ -86,6 +98,11 @@ app.use('/images', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, 'images')));
 
+// Serve admin page
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
 // Set up logging
 const LOG_DIR = path.join(__dirname, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'model_prompts.log');
@@ -98,6 +115,50 @@ const npcConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'npc-config.j
 
 // Load NPCs
 const npcs = {};
+
+// Function to load NPCs from Cloudinary
+async function loadNpcsFromCloudinary() {
+  try {
+    console.log('Loading NPCs from Cloudinary...');
+    // Get list of all NPC data files from Cloudinary
+    const result = await cloudinary.search
+      .expression('resource_type:raw AND folder:npcs/data')
+      .max_results(100)
+      .execute();
+
+    console.log(`Found ${result.resources.length} NPCs in Cloudinary`);
+
+    // Load each NPC's data
+    for (const resource of result.resources) {
+      try {
+        const response = await fetch(resource.secure_url);
+        const npcData = await response.json();
+        
+        // Merge with default config
+        npcs[npcData.id] = {
+          ...npcData,
+          responseTriggers: npcConfig.responseTriggers,
+          whatTheyKnow: npcData.whatTheyKnow || [],
+          pitfalls: npcData.pitfalls || [],
+          motivations: npcData.motivations || [],
+          name: npcData.name || 'Unknown',
+          description: npcData.description || '',
+          personality: npcData.personality || '',
+          currentScene: npcData.currentScene || '',
+          cloudinaryUrl: resource.secure_url
+        };
+        
+        console.log(`Loaded NPC ${npcData.id} from Cloudinary`);
+      } catch (error) {
+        console.error(`Error loading NPC from ${resource.secure_url}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading NPCs from Cloudinary:', error);
+  }
+}
+
+// Load NPCs from local files first, then from Cloudinary
 fs.readdirSync(NPCS_DIR).forEach(file => {
     if (file.endsWith('.json')) {
         const npcData = JSON.parse(fs.readFileSync(path.join(NPCS_DIR, file), 'utf8'));
@@ -113,13 +174,17 @@ fs.readdirSync(NPCS_DIR).forEach(file => {
             name: npcData.name || 'Unknown',
             description: npcData.description || '',
             personality: npcData.personality || '',
-            currentScene: npcData.currentScene || ''
+            currentScene: npcData.currentScene || '',
+            source: 'local'
         };
-        logInfo(`Loaded NPC ${npcData.id} with response triggers: ${JSON.stringify(npcConfig.responseTriggers)}`);
+        logInfo(`Loaded NPC ${npcData.id} from local file with response triggers: ${JSON.stringify(npcConfig.responseTriggers)}`);
     }
 });
 
-console.log('Loaded NPCs:', Object.keys(npcs));
+// Load NPCs from Cloudinary (this will add to or override local NPCs)
+loadNpcsFromCloudinary().then(() => {
+  console.log('All NPCs loaded. Available NPCs:', Object.keys(npcs));
+});
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -149,6 +214,22 @@ function getVoiceSettings(npcVoice) {
     return {
         ...defaultSettings,
         ...npcVoice.settings
+    };
+}
+
+// Function to extract clean NPC data (only core properties that should be saved)
+function getCleanNpcData(npc) {
+    return {
+        id: npc.id,
+        name: npc.name,
+        description: npc.description,
+        personality: npc.personality,
+        currentScene: npc.currentScene,
+        whatTheyKnow: npc.whatTheyKnow || [],
+        pitfalls: npc.pitfalls || [],
+        motivations: npc.motivations || [],
+        voice: npc.voice,
+        imagePrompt: npc.imagePrompt
     };
 }
 
@@ -282,13 +363,28 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
     
     logInfo(`Retrieved context for ${npcId}, session ${session.sessionId}`);
     
-    const localImagePath = `/images/${npc.id}.png`;
-    console.log(`[CONTEXT] Setting localImagePath for ${npc.id} to: ${localImagePath}`);
+    // Check for Cloudinary image first, then local image
+    let imageUrl = null;
+    let localImagePath = null;
     
-    // Check if local image exists
-    const imagePath = path.join(__dirname, 'images', `${npc.id}.png`);
-    const hasLocalImage = fs.existsSync(imagePath);
-    console.log(`[CONTEXT] Local image ${hasLocalImage ? 'exists' : 'does not exist'} at: ${imagePath}`);
+    if (npc.imageUrl) {
+      // Use Cloudinary image if available
+      imageUrl = npc.imageUrl;
+      localImagePath = npc.imageUrl;
+      console.log(`[CONTEXT] Using Cloudinary image for ${npc.id}: ${imageUrl}`);
+    } else {
+      // Fall back to local image
+      const localPath = `/images/${npc.id}.png`;
+      const imagePath = path.join(__dirname, 'images', `${npc.id}.png`);
+      const hasLocalImage = fs.existsSync(imagePath);
+      
+      if (hasLocalImage) {
+        localImagePath = localPath;
+        console.log(`[CONTEXT] Using local image for ${npc.id}: ${localPath}`);
+      } else {
+        console.log(`[CONTEXT] No image found for ${npc.id}`);
+      }
+    }
     
     res.json({
       ...npc,
@@ -298,7 +394,8 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
         interest: session.interest, // Include interest in the response
         lastUpdated: session.lastActive
       },
-      localImagePath: hasLocalImage ? localImagePath : null,
+      localImagePath: localImagePath,
+      imageUrl: imageUrl,
       conversationHistory: session.messages // Include server-side conversation history
     });
   } catch (error) {
@@ -315,21 +412,27 @@ app.post(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
     
     // Validate required fields
     if (!updatedNpc.id || !updatedNpc.name || !updatedNpc.description || 
-        !updatedNpc.personality || !updatedNpc.currentScene || !updatedNpc.gameContext) {
+        !updatedNpc.personality || !updatedNpc.currentScene || 
+        !updatedNpc.whatTheyKnow || !updatedNpc.pitfalls || !updatedNpc.motivations) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    // Update the NPC data
-    npcs[npcId] = updatedNpc;
+    // Update the NPC data in memory (merge with existing runtime properties)
+    npcs[npcId] = {
+      ...npcs[npcId], // Keep existing runtime properties like responseTriggers, source, etc.
+      ...updatedNpc,  // Apply the updates
+      id: npcId       // Ensure ID doesn't change
+    };
     
-    // Save to file
+    // Save clean data to local file
     const filePath = path.join(NPCS_DIR, `${npcId}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(updatedNpc, null, 2));
+    const cleanNpcData = getCleanNpcData(npcs[npcId]);
+    fs.writeFileSync(filePath, JSON.stringify(cleanNpcData, null, 2));
     
     logInfo(`Updated context for ${npcId}`);
     
-    // Return the updated NPC data
-    res.json(updatedNpc);
+    // Return the updated NPC data (clean version)
+    res.json(cleanNpcData);
   } catch (error) {
     logError('Error updating NPC context:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -485,7 +588,7 @@ app.get('/sse/conversation/:npcId', (req, res) => {
       logError('Error sending heartbeat:', error);
       clearInterval(heartbeatInterval);
     }
-  }, 30000); // Every 30 seconds
+  }, 30000);
   
   // Clear interval on disconnect
   req.on('close', () => {
@@ -802,10 +905,7 @@ app.post('/speak/:npcId', async (req, res) => {
     }
 });
 
-// Add a cache for generated images
-const imageCache = {};
-
-// Modify the generate-image endpoint to add logging
+// Modify the generate-image endpoint to use Cloudinary
 app.post('/generate-image/:npcId', async (req, res) => {
   const { npcId } = req.params;
   
@@ -832,29 +932,41 @@ app.post('/generate-image/:npcId', async (req, res) => {
     const imageUrl = response.data[0].url;
     console.log(`[${new Date().toISOString()}] DALL-E Response URL:`, imageUrl);
     
-    // Download and save the image
-    const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok) throw new Error('Failed to download image');
-    
-    const imageBuffer = await imageResponse.buffer();
-    const imagePath = path.join(__dirname, 'images', `${npcId}.png`);
-    
-    // Ensure the images directory exists
-    const imagesDir = path.join(__dirname, 'images');
-    if (!fs.existsSync(imagesDir)) {
-        fs.mkdirSync(imagesDir, { recursive: true });
-    }
-    
-    // Save the image, overwriting if it already exists
-    fs.writeFileSync(imagePath, imageBuffer);
-    console.log(`[${new Date().toISOString()}] Saved image to:`, imagePath);
+    // Upload image to Cloudinary
+    console.log('Uploading image to Cloudinary...');
+    const uploadResponse = await cloudinary.uploader.upload(imageUrl, {
+      public_id: `npcs/images/${npcId}`,
+      overwrite: true
+    });
+
+    console.log(`[${new Date().toISOString()}] Image uploaded to Cloudinary:`, uploadResponse.secure_url);
+
+    // Update NPC data with Cloudinary image URL
+    npc.imageUrl = uploadResponse.secure_url;
+    npc.cloudinaryImageId = uploadResponse.public_id;
+
+    // Save updated NPC data to Cloudinary (use clean data only)
+    console.log('Saving updated NPC data to Cloudinary...');
+    const cleanNpcData = getCleanNpcData(npc);
+    const npcDataBuffer = Buffer.from(JSON.stringify(cleanNpcData, null, 2));
+    const npcDataUpload = await cloudinary.uploader.upload(
+      `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
+      {
+        public_id: `npcs/data/${npcId}`,
+        resource_type: 'raw',
+        overwrite: true
+      }
+    );
+
+    console.log(`[${new Date().toISOString()}] NPC data saved to Cloudinary:`, npcDataUpload.secure_url);
     
     res.json({ 
-        imageUrl,
-        localImagePath: `/images/${npcId}.png`
+        imageUrl: uploadResponse.secure_url,
+        localImagePath: uploadResponse.secure_url, // Use Cloudinary URL as the "local" path
+        npcDataUrl: npcDataUpload.secure_url
     });
   } catch (error) {
-    console.error('Error generating image:', error);
+    console.error('Error generating/uploading image:', error);
     
     // Handle rate limit errors
     if (error.status === 429) {
@@ -865,7 +977,7 @@ app.post('/generate-image/:npcId', async (req, res) => {
       });
     }
     
-    res.status(500).json({ error: 'Failed to generate image' });
+    res.status(500).json({ error: 'Failed to generate/upload image' });
   }
 });
 
@@ -957,6 +1069,242 @@ app.post('/api/npc/:npcId/attitude', (req, res) => {
   } catch (error) {
     logError('Error setting attitude:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add endpoint to create new NPC
+app.post('/npcs', async (req, res) => {
+  try {
+    const npcData = req.body;
+    const npcId = npcData.id.toLowerCase().replace(/[^a-z0-9]/g, ''); // Sanitize ID
+
+    // Validate required fields
+    if (!npcId || !npcData.name || !npcData.description) {
+      return res.status(400).json({ error: 'Missing required fields: id, name, description' });
+    }
+
+    // Check if NPC already exists
+    if (npcs[npcId]) {
+      return res.status(409).json({ error: 'NPC with this ID already exists' });
+    }
+
+    // Prepare NPC data with defaults
+    const completeNpcData = {
+      id: npcId,
+      name: npcData.name,
+      description: npcData.description,
+      personality: npcData.personality || '',
+      currentScene: npcData.currentScene || '',
+      whatTheyKnow: npcData.whatTheyKnow || [],
+      pitfalls: npcData.pitfalls || [],
+      motivations: npcData.motivations || [],
+      imagePrompt: npcData.imagePrompt || '',
+      voice: npcData.voice || {
+        provider: "elevenlabs",
+        voiceId: "ysswSXp8U9dFpzPJqFje", // Default voice
+        settings: {
+          stability: 0.55,
+          similarity_boost: 0.7,
+          style: 0.3,
+          use_speaker_boost: true
+        }
+      }
+    };
+
+    console.log(`Creating new NPC: ${npcId}`);
+
+    // Save clean NPC data to Cloudinary
+    const npcDataBuffer = Buffer.from(JSON.stringify(completeNpcData, null, 2));
+    const npcDataUpload = await cloudinary.uploader.upload(
+      `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
+      {
+        public_id: `npcs/data/${npcId}`,
+        resource_type: 'raw',
+        overwrite: true
+      }
+    );
+
+    // Add to local npcs object (with runtime properties)
+    npcs[npcId] = {
+      ...completeNpcData,
+      responseTriggers: npcConfig.responseTriggers,
+      source: 'cloudinary',
+      createdAt: new Date().toISOString(),
+      cloudinaryUrl: npcDataUpload.secure_url
+    };
+
+    console.log(`NPC ${npcId} created and saved to Cloudinary`);
+
+    res.json({
+      success: true,
+      npc: completeNpcData,
+      dataUrl: npcDataUpload.secure_url
+    });
+  } catch (error) {
+    console.error('Error creating NPC:', error);
+    res.status(500).json({ error: 'Failed to create NPC' });
+  }
+});
+
+// Admin endpoints for editing NPCs
+// GET endpoint to retrieve current NPC data for editing
+app.get('/admin/npc/:npcId', (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const npc = npcs[npcId];
+    
+    if (!npc) {
+      return res.status(404).json({ error: 'NPC not found' });
+    }
+    
+    // Return clean NPC data (without runtime properties)
+    const cleanNpcData = getCleanNpcData(npc);
+    res.json(cleanNpcData);
+  } catch (error) {
+    console.error('Error getting NPC for admin:', error);
+    res.status(500).json({ error: 'Failed to get NPC data' });
+  }
+});
+
+// PUT endpoint to update NPC data
+app.put('/admin/npc/:npcId', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const updatedData = req.body;
+    
+    if (!npcs[npcId]) {
+      return res.status(404).json({ error: 'NPC not found' });
+    }
+    
+    // Update the NPC data in memory
+    npcs[npcId] = {
+      ...npcs[npcId],
+      ...updatedData,
+      id: npcId, // Ensure ID doesn't change
+      lastModified: new Date().toISOString()
+    };
+    
+    console.log(`Admin: Updating NPC ${npcId} data`);
+    
+    // Save clean NPC data to Cloudinary
+    const cleanNpcData = getCleanNpcData(npcs[npcId]);
+    const npcDataBuffer = Buffer.from(JSON.stringify(cleanNpcData, null, 2));
+    const npcDataUpload = await cloudinary.uploader.upload(
+      `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
+      {
+        public_id: `npcs/data/${npcId}`,
+        resource_type: 'raw',
+        overwrite: true
+      }
+    );
+    
+    console.log(`Admin: NPC ${npcId} data saved to Cloudinary:`, npcDataUpload.secure_url);
+    
+    res.json({
+      success: true,
+      npc: npcs[npcId],
+      cloudinaryUrl: npcDataUpload.secure_url
+    });
+  } catch (error) {
+    console.error('Error updating NPC:', error);
+    res.status(500).json({ error: 'Failed to update NPC' });
+  }
+});
+
+// Quick endpoint to update just the voice ID
+app.post('/admin/npc/:npcId/voice', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    const { voiceId, settings } = req.body;
+    
+    if (!npcs[npcId]) {
+      return res.status(404).json({ error: 'NPC not found' });
+    }
+    
+    // Update voice settings
+    npcs[npcId].voice = {
+      ...npcs[npcId].voice,
+      voiceId: voiceId || npcs[npcId].voice.voiceId,
+      settings: settings || npcs[npcId].voice.settings
+    };
+    
+    console.log(`Admin: Updating voice for ${npcId} to ${voiceId}`);
+    
+    // Save clean NPC data to Cloudinary
+    const cleanNpcData = getCleanNpcData(npcs[npcId]);
+    const npcDataBuffer = Buffer.from(JSON.stringify(cleanNpcData, null, 2));
+    const npcDataUpload = await cloudinary.uploader.upload(
+      `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
+      {
+        public_id: `npcs/data/${npcId}`,
+        resource_type: 'raw',
+        overwrite: true
+      }
+    );
+    
+    res.json({
+      success: true,
+      voice: npcs[npcId].voice,
+      cloudinaryUrl: npcDataUpload.secure_url
+    });
+  } catch (error) {
+    console.error('Error updating voice:', error);
+    res.status(500).json({ error: 'Failed to update voice' });
+  }
+});
+
+// Utility endpoint to clean all NPC data in Cloudinary (remove runtime properties)
+app.post('/admin/clean-npcs', async (req, res) => {
+  try {
+    const results = [];
+    
+    for (const [npcId, npc] of Object.entries(npcs)) {
+      try {
+        console.log(`Cleaning NPC data for ${npcId}...`);
+        
+        // Get clean data
+        const cleanNpcData = getCleanNpcData(npc);
+        
+        // Save to Cloudinary
+        const npcDataBuffer = Buffer.from(JSON.stringify(cleanNpcData, null, 2));
+        const npcDataUpload = await cloudinary.uploader.upload(
+          `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
+          {
+            public_id: `npcs/data/${npcId}`,
+            resource_type: 'raw',
+            overwrite: true
+          }
+        );
+        
+        // Also save to local file
+        const filePath = path.join(NPCS_DIR, `${npcId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(cleanNpcData, null, 2));
+        
+        results.push({
+          npcId,
+          status: 'success',
+          cloudinaryUrl: npcDataUpload.secure_url
+        });
+        
+        console.log(`Successfully cleaned ${npcId}`);
+      } catch (error) {
+        console.error(`Error cleaning ${npcId}:`, error);
+        results.push({
+          npcId,
+          status: 'error',
+          error: error.message
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Cleaned ${results.filter(r => r.status === 'success').length} NPCs`,
+      results
+    });
+  } catch (error) {
+    console.error('Error cleaning NPCs:', error);
+    res.status(500).json({ error: 'Failed to clean NPCs' });
   }
 });
 

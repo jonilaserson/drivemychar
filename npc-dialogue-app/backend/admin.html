@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPC JSON Editor</title>
+    <style>
+        body {
+            font-family: monospace;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        select, button {
+            padding: 10px;
+            margin: 10px 5px;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            height: 500px;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        .error {
+            color: red;
+            background: #ffe6e6;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success {
+            color: green;
+            background: #e6ffe6;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .buttons {
+            margin: 20px 0;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>NPC JSON Editor</h1>
+        
+        <div>
+            <label for="npcSelect">Select NPC:</label>
+            <select id="npcSelect">
+                <option value="">-- Select an NPC --</option>
+            </select>
+            <button onclick="loadNpc()">Load</button>
+            <button onclick="refreshNpcList()">Refresh List</button>
+        </div>
+
+        <div id="message"></div>
+
+        <div>
+            <h3>JSON Data:</h3>
+            <textarea id="jsonEditor" placeholder="Select an NPC to load its JSON data..."></textarea>
+        </div>
+
+        <div class="buttons">
+            <button onclick="validateJson()">Validate JSON</button>
+            <button onclick="saveNpc()" id="saveButton" disabled>Save to Cloudinary</button>
+            <button onclick="formatJson()">Format JSON</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentNpcId = null;
+
+        // Load list of NPCs
+        async function refreshNpcList() {
+            try {
+                const response = await fetch(`${API_BASE}/npcs`);
+                const npcs = await response.json();
+                
+                const select = document.getElementById('npcSelect');
+                select.innerHTML = '<option value="">-- Select an NPC --</option>';
+                
+                npcs.forEach(npc => {
+                    const option = document.createElement('option');
+                    option.value = npc.id;
+                    option.textContent = `${npc.name} (${npc.id})`;
+                    select.appendChild(option);
+                });
+                
+                showMessage('NPC list refreshed', 'success');
+            } catch (error) {
+                showMessage(`Error loading NPCs: ${error.message}`, 'error');
+            }
+        }
+
+        // Load selected NPC data
+        async function loadNpc() {
+            const select = document.getElementById('npcSelect');
+            const npcId = select.value;
+            
+            if (!npcId) {
+                showMessage('Please select an NPC', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/admin/npc/${npcId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const npcData = await response.json();
+                
+                // Display formatted JSON
+                document.getElementById('jsonEditor').value = JSON.stringify(npcData, null, 2);
+                currentNpcId = npcId;
+                document.getElementById('saveButton').disabled = false;
+                
+                showMessage(`Loaded ${npcData.name} successfully`, 'success');
+            } catch (error) {
+                showMessage(`Error loading NPC: ${error.message}`, 'error');
+            }
+        }
+
+        // Validate JSON format
+        function validateJson() {
+            const jsonText = document.getElementById('jsonEditor').value;
+            
+            if (!jsonText.trim()) {
+                showMessage('JSON editor is empty', 'error');
+                return false;
+            }
+
+            try {
+                const parsed = JSON.parse(jsonText);
+                
+                // Basic validation - check required fields
+                const required = ['id', 'name', 'description'];
+                const missing = required.filter(field => !parsed[field]);
+                
+                if (missing.length > 0) {
+                    showMessage(`Missing required fields: ${missing.join(', ')}`, 'error');
+                    return false;
+                }
+                
+                showMessage('JSON is valid!', 'success');
+                return true;
+            } catch (error) {
+                showMessage(`Invalid JSON: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Format JSON
+        function formatJson() {
+            const jsonText = document.getElementById('jsonEditor').value;
+            
+            try {
+                const parsed = JSON.parse(jsonText);
+                document.getElementById('jsonEditor').value = JSON.stringify(parsed, null, 2);
+                showMessage('JSON formatted', 'success');
+            } catch (error) {
+                showMessage(`Cannot format invalid JSON: ${error.message}`, 'error');
+            }
+        }
+
+        // Save NPC data
+        async function saveNpc() {
+            if (!currentNpcId) {
+                showMessage('No NPC selected', 'error');
+                return;
+            }
+
+            if (!validateJson()) {
+                return;
+            }
+
+            const jsonText = document.getElementById('jsonEditor').value;
+            
+            try {
+                const npcData = JSON.parse(jsonText);
+                
+                const response = await fetch(`${API_BASE}/admin/npc/${currentNpcId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(npcData)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                showMessage(`Successfully saved ${result.npc.name} to Cloudinary!`, 'success');
+                
+            } catch (error) {
+                showMessage(`Error saving NPC: ${error.message}`, 'error');
+            }
+        }
+
+        // Show message
+        function showMessage(text, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = text;
+            messageDiv.className = type;
+            
+            // Clear message after 5 seconds
+            setTimeout(() => {
+                messageDiv.textContent = '';
+                messageDiv.className = '';
+            }, 5000);
+        }
+
+        // Load NPCs on page load
+        window.onload = refreshNpcList;
+    </script>
+</body>
+</html> 

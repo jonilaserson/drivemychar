@@ -20,7 +20,6 @@
     "Protect and impress his wife Forgeetee",
     "Prove his superiority to other swamp creatures"
   ],
-  "specialAbilities": "Can spray a particularly foul-smelling slime from his mouth that causes creatures to flee in disgust.",
   "voice": {
     "provider": "elevenlabs",
     "voiceId": "D38z5RcWu1voky8WS1ja",
@@ -32,4 +31,4 @@
     }
   },
   "imagePrompt": "Create a portrait of {name}: A large, well-groomed green frog wearing fancy accessories and surrounded by bottles of balms and oils. His expression is snobbish and self-important. Style: fantasy art, detailed, professional illustration, slightly humorous"
-} 
+}

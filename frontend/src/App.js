@@ -732,15 +732,27 @@ function App() {
         setNpcImage(null);
         setImageError(null);
         
-        // Try loading local image first, fall back to URL if available
-        if (data.localImagePath) {
-          const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
-          const success = await loadAndSetImage(fullImageUrl, data.url);
-          if (!success && !data.url) {
-            setImageError('Image not available');
+        // Handle image URL - check if it's already a full URL (Cloudinary)
+        let imageUrl;
+        if (data.localImagePath && data.localImagePath.startsWith('http')) {
+          // Already a full URL (Cloudinary), use as-is
+          imageUrl = data.localImagePath;
+        } else if (data.localImagePath) {
+          // Local path, prepend backend URL
+          imageUrl = `${BACKEND_URL}${data.localImagePath}`;
+        } else if (data.imageUrl) {
+          // Use imageUrl as fallback
+          imageUrl = data.imageUrl;
+        }
+        
+        if (imageUrl) {
+          // Force cache invalidation with timestamp
+          const success = await loadAndSetImage(`${imageUrl}?t=${new Date().getTime()}`);
+          if (!success) {
+            setImageError('Generated image is not available');
           }
-        } else if (data.url) {
-          await loadAndSetImage(data.url);
+        } else {
+          setImageError('No image URL returned from server');
         }
         
         setIsLoadingContext(false);
@@ -819,12 +831,28 @@ function App() {
       }
 
       const data = await response.json();
-      const fullImageUrl = `${BACKEND_URL}${data.localImagePath}`;
       
-      // Force cache invalidation with timestamp
-      const success = await loadAndSetImage(`${fullImageUrl}?t=${new Date().getTime()}`);
-      if (!success) {
-        setImageError('Generated image is not available');
+      // Handle image URL - check if it's already a full URL (Cloudinary)
+      let imageUrl;
+      if (data.localImagePath && data.localImagePath.startsWith('http')) {
+        // Already a full URL (Cloudinary), use as-is
+        imageUrl = data.localImagePath;
+      } else if (data.localImagePath) {
+        // Local path, prepend backend URL
+        imageUrl = `${BACKEND_URL}${data.localImagePath}`;
+      } else if (data.imageUrl) {
+        // Use imageUrl as fallback
+        imageUrl = data.imageUrl;
+      }
+      
+      if (imageUrl) {
+        // Force cache invalidation with timestamp
+        const success = await loadAndSetImage(`${imageUrl}?t=${new Date().getTime()}`);
+        if (!success) {
+          setImageError('Generated image is not available');
+        }
+      } else {
+        setImageError('No image URL returned from server');
       }
     } catch (error) {
       console.error('Error generating image:', error);
@@ -1040,22 +1068,37 @@ function App() {
                 <div className="loading-image">Loading image...</div>
               ) : (
                 <>
-                  {npcImage && (
-                    <img
-                      className="npc-image"
-                      src={npcImage}
-                      alt={selectedNpc.name}
-                      onClick={() => setShowImageModal(true)}
-                    />
-                  )}
-                  {isGMMode && (
-                    <button
-                      className="generate-image-button"
-                      onClick={generateNpcImage}
-                      disabled={isGenerating}
-                    >
-                      {isGenerating ? 'Generating...' : 'Generate Image'}
-                    </button>
+                  {npcImage ? (
+                    <>
+                      <img
+                        className="npc-image"
+                        src={npcImage}
+                        alt={selectedNpc.name}
+                        onClick={() => setShowImageModal(true)}
+                      />
+                      {isGMMode && (
+                        <button
+                          className="generate-image-button"
+                          onClick={generateNpcImage}
+                          disabled={isGenerating}
+                        >
+                          {isGenerating ? 'Generating...' : 'Generate Image'}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="no-image-container">
+                      <div className="no-image-placeholder">No image available</div>
+                      {isGMMode && (
+                        <button
+                          className="generate-image-button standalone"
+                          onClick={generateNpcImage}
+                          disabled={isGenerating}
+                        >
+                          {isGenerating ? 'Generating...' : 'Generate Image'}
+                        </button>
+                      )}
+                    </div>
                   )}
                   {imageError && <div className="image-error">{imageError}</div>}
                 </>
