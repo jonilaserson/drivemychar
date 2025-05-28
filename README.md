@@ -47,12 +47,19 @@ CLOUDINARY_API_SECRET=your_cloudinary_secret
 
 3. **Start the application:**
 ```bash
-# Terminal 1: Backend
-cd npc-dialogue-app/backend && npm start
+# Terminal 1: Backend (choose one of these methods)
+cd npc-dialogue-app/backend
+npm start
+# OR
+cd npc-dialogue-app/backend
+node server.js
 
 # Terminal 2: Frontend (on port 3001 to avoid conflict)
-cd frontend && PORT=3001 npm start
+cd frontend
+PORT=3001 npm start
 ```
+
+> **Note**: Both `npm start` and `node server.js` work to start the backend. Use `npm start` for standard workflow, or `node server.js` for direct execution.
 
 4. **Access:**
 - **Player Interface**: http://localhost:3001
