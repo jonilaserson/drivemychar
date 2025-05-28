@@ -116,10 +116,33 @@ const npcConfig = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'npc-config.j
 // Load NPCs
 const npcs = {};
 
+// Helper function to search for NPC image in Cloudinary
+async function findNpcImageInCloudinary(npcId) {
+  try {
+    const imageResult = await cloudinary.search
+      .expression(`public_id:npcs/images/${npcId}`)
+      .max_results(1)
+      .execute();
+    
+    if (imageResult.resources && imageResult.resources.length > 0) {
+      const imageUrl = imageResult.resources[0].secure_url;
+      console.log(`Found Cloudinary image for ${npcId}: ${imageUrl}`);
+      return imageUrl;
+    } else {
+      console.log(`No Cloudinary image found for ${npcId}`);
+      return null;
+    }
+  } catch (error) {
+    console.log(`Error searching for image for ${npcId}:`, error.message);
+    return null;
+  }
+}
+
 // Function to load NPCs from Cloudinary
 async function loadNpcsFromCloudinary() {
   try {
     console.log('Loading NPCs from Cloudinary...');
+    
     // Get list of all NPC data files from Cloudinary
     const result = await cloudinary.search
       .expression('resource_type:raw AND folder:npcs/data')
@@ -128,11 +151,12 @@ async function loadNpcsFromCloudinary() {
 
     console.log(`Found ${result.resources.length} NPCs in Cloudinary`);
 
-    // Load each NPC's data
+    // Load each NPC's data from Cloudinary
     for (const resource of result.resources) {
       try {
         const response = await fetch(resource.secure_url);
         const npcData = await response.json();
+        const imageUrl = await findNpcImageInCloudinary(npcData.id);
         
         // Merge with default config
         npcs[npcData.id] = {
@@ -145,12 +169,25 @@ async function loadNpcsFromCloudinary() {
           description: npcData.description || '',
           personality: npcData.personality || '',
           currentScene: npcData.currentScene || '',
-          cloudinaryUrl: resource.secure_url
+          cloudinaryUrl: resource.secure_url,
+          imageUrl: imageUrl
         };
         
-        console.log(`Loaded NPC ${npcData.id} from Cloudinary`);
+        console.log(`Loaded NPC ${npcData.id} from Cloudinary${imageUrl ? ' with image' : ''}`);
       } catch (error) {
         console.error(`Error loading NPC from ${resource.secure_url}:`, error);
+      }
+    }
+    
+    // Search for Cloudinary images for locally-loaded NPCs
+    console.log('Searching for Cloudinary images for locally-loaded NPCs...');
+    const localNpcs = Object.entries(npcs).filter(([_, npc]) => npc.source === 'local' && !npc.imageUrl);
+    
+    for (const [npcId, npc] of localNpcs) {
+      const imageUrl = await findNpcImageInCloudinary(npcId);
+      if (imageUrl) {
+        npc.imageUrl = imageUrl;
+        console.log(`Found Cloudinary image for locally-loaded NPC ${npcId}`);
       }
     }
   } catch (error) {
@@ -229,7 +266,8 @@ function getCleanNpcData(npc) {
         pitfalls: npc.pitfalls || [],
         motivations: npc.motivations || [],
         voice: npc.voice,
-        imagePrompt: npc.imagePrompt
+        imagePrompt: npc.imagePrompt,
+        imageUrl: npc.imageUrl // Include Cloudinary image URL
     };
 }
 
