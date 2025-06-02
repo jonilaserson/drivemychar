@@ -1346,6 +1346,36 @@ app.post('/admin/clean-npcs', async (req, res) => {
   }
 });
 
+// Add this after the existing routes and before the port listener
+// Character-specific routes for direct URLs
+app.get('/api/character/:npcId/info', (req, res) => {
+  const { npcId } = req.params;
+  const npc = npcs[npcId];
+  
+  if (!npc) {
+    return res.status(404).json({ error: 'Character not found' });
+  }
+  
+  res.json({
+    id: npc.id,
+    name: npc.name,
+    description: npc.description,
+    exists: true
+  });
+});
+
+// Get all characters with basic info for selection
+app.get('/api/characters', (req, res) => {
+  const characterList = Object.values(npcs).map(npc => ({
+    id: npc.id,
+    name: npc.name,
+    description: npc.description,
+    imageUrl: npc.imageUrl
+  }));
+  
+  res.json(characterList);
+});
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {

@@ -8,7 +8,7 @@
     "The best spots for rare swamp herbs and ingredients",
     "The locations of hidden treasure in the swamp",
     "The secret paths through dangerous swamp areas",
-    "The habits of dangerous swamp creatures",
+    "The code to the safe is 2480",
     "The value of various swamp resources"
   ],
   "pitfalls": [
@@ -30,5 +30,6 @@
       "use_speaker_boost": true
     }
   },
-  "imagePrompt": "Create a portrait of {name}: A large, well-groomed green frog wearing fancy accessories and surrounded by bottles of balms and oils. His expression is snobbish and self-important. Style: fantasy art, detailed, professional illustration, slightly humorous"
+  "imagePrompt": "Create a portrait of {name}: A large, well-groomed green frog wearing fancy accessories and surrounded by bottles of balms and oils. His expression is snobbish and self-important. Style: fantasy art, detailed, professional illustration, slightly humorous",
+  "imageUrl": null
 }

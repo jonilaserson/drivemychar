@@ -1642,3 +1642,77 @@ button:hover {
   will-change: auto;
 }
 
+/* Character selector and sharing */
+.character-selector-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Character not found page */
+.character-not-found {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  text-align: center;
+  padding: 20px;
+}
+
+.character-not-found h2 {
+  color: #333;
+  margin-bottom: 16px;
+  font-size: 2rem;
+}
+
+.character-not-found p {
+  color: #666;
+  font-size: 1.1rem;
+  margin-bottom: 24px;
+  max-width: 500px;
+}
+
+.character-not-found button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.character-not-found button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+  font-size: 1.2rem;
+  color: #666;
+}
+
+/* Mobile responsiveness for character selector */
+@media (max-width: 768px) {
+  .character-selector-container {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .character-not-found h2 {
+    font-size: 1.5rem;
+  }
+  
+  .character-not-found p {
+    font-size: 1rem;
+  }
+}
+
