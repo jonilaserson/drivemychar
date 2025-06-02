@@ -96,19 +96,467 @@ const AttributeTracker = React.memo(({ label, value, icon, onIncrement, onDecrem
 });
 
 // Character selector component
-const CharacterSelector = React.memo(({ npcs, selectedNpcId, onCharacterChange }) => (
+const CharacterSelector = React.memo(({ npcs, selectedNpcId, onCharacterChange, showCreateOption, onCreateNew }) => (
   <div className="character-selector-container">
     <select 
       value={selectedNpcId} 
-      onChange={(e) => onCharacterChange(e.target.value)}
+      onChange={(e) => {
+        if (e.target.value === '__create_new__') {
+          onCreateNew();
+        } else {
+          onCharacterChange(e.target.value);
+        }
+      }}
       className="npc-selector">
       <option value="">Select a character...</option>
       {npcs.map(npc => (
         <option key={npc.id} value={npc.id}>{npc.name}</option>
       ))}
+      {showCreateOption && (
+        <option value="__create_new__">+ Create New Character</option>
+      )}
     </select>
   </div>
 ));
+
+// Character Preview Component
+const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack }) => {
+  const [editedData, setEditedData] = useState(data);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const updateField = (field, value) => {
+    const newData = { ...editedData, [field]: value };
+    setEditedData(newData);
+    onEdit(newData);
+  };
+
+  const updateArrayField = (field, index, value) => {
+    const newArray = [...editedData[field]];
+    newArray[index] = value;
+    updateField(field, newArray);
+  };
+
+  const addArrayItem = (field) => {
+    const newArray = [...editedData[field], ''];
+    updateField(field, newArray);
+  };
+
+  const removeArrayItem = (field, index) => {
+    const newArray = editedData[field].filter((_, i) => i !== index);
+    updateField(field, newArray);
+  };
+
+  const handleCreate = async () => {
+    setIsCreating(true);
+    await onCreate();
+  };
+
+  return (
+    <div className="character-preview">
+      <h3>Character Preview</h3>
+      <p className="preview-hint">Review and edit the parsed character data below:</p>
+      
+      <div className="preview-section">
+        <label>Name:</label>
+        <input
+          type="text"
+          value={editedData.name}
+          onChange={(e) => updateField('name', e.target.value)}
+        />
+      </div>
+
+      <div className="preview-section">
+        <label>Description:</label>
+        <textarea
+          value={editedData.description}
+          onChange={(e) => updateField('description', e.target.value)}
+          rows="3"
+        />
+      </div>
+
+      <div className="preview-section">
+        <label>Personality:</label>
+        <textarea
+          value={editedData.personality}
+          onChange={(e) => updateField('personality', e.target.value)}
+          rows="3"
+        />
+      </div>
+
+      <div className="preview-section">
+        <label>Current Scene:</label>
+        <textarea
+          value={editedData.currentScene}
+          onChange={(e) => updateField('currentScene', e.target.value)}
+          rows="2"
+        />
+      </div>
+
+      <div className="preview-section">
+        <label>What They Know:</label>
+        {editedData.whatTheyKnow.map((item, index) => (
+          <div key={index} className="array-item">
+            <input
+              type="text"
+              value={item}
+              onChange={(e) => updateArrayField('whatTheyKnow', index, e.target.value)}
+            />
+            <button onClick={() => removeArrayItem('whatTheyKnow', index)}>×</button>
+          </div>
+        ))}
+        <button onClick={() => addArrayItem('whatTheyKnow')} className="add-item">+ Add Knowledge</button>
+      </div>
+
+      <div className="preview-section">
+        <label>Pitfalls:</label>
+        {editedData.pitfalls.map((item, index) => (
+          <div key={index} className="array-item">
+            <input
+              type="text"
+              value={item}
+              onChange={(e) => updateArrayField('pitfalls', index, e.target.value)}
+            />
+            <button onClick={() => removeArrayItem('pitfalls', index)}>×</button>
+          </div>
+        ))}
+        <button onClick={() => addArrayItem('pitfalls')} className="add-item">+ Add Pitfall</button>
+      </div>
+
+      <div className="preview-section">
+        <label>Motivations:</label>
+        {editedData.motivations.map((item, index) => (
+          <div key={index} className="array-item">
+            <input
+              type="text"
+              value={item}
+              onChange={(e) => updateArrayField('motivations', index, e.target.value)}
+            />
+            <button onClick={() => removeArrayItem('motivations', index)}>×</button>
+          </div>
+        ))}
+        <button onClick={() => addArrayItem('motivations')} className="add-item">+ Add Motivation</button>
+      </div>
+
+      <div className="preview-actions">
+        <button onClick={onBack} className="secondary-button">← Back to Input</button>
+        <button 
+          onClick={handleCreate} 
+          disabled={isCreating || !editedData.name.trim()}
+          className="primary-button"
+        >
+          {isCreating ? 'Creating Character...' : 'Create Character'}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// Character Editor Component (for editing existing characters)
+const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose }) => {
+  const [editedData, setEditedData] = useState(data);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [error, setError] = useState(null);
+
+  const updateField = (field, value) => {
+    const newData = { ...editedData, [field]: value };
+    setEditedData(newData);
+  };
+
+  const updateArrayField = (field, index, value) => {
+    const newArray = [...editedData[field]];
+    newArray[index] = value;
+    updateField(field, newArray);
+  };
+
+  const addArrayItem = (field) => {
+    const newArray = [...editedData[field], ''];
+    updateField(field, newArray);
+  };
+
+  const removeArrayItem = (field, index) => {
+    const newArray = editedData[field].filter((_, i) => i !== index);
+    updateField(field, newArray);
+  };
+
+  const handleUpdate = async () => {
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BACKEND_URL}/context/${editedData.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editedData)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update character');
+      }
+      
+      await onCharacterUpdated();
+    } catch (error) {
+      console.error('Error updating character:', error);
+      setError(error.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  return (
+    <div className="character-creator-modal">
+      <div className="modal-backdrop" onClick={onClose}></div>
+      <div className="character-creator">
+        <div className="creator-header">
+          <h2>Edit Character: {data.name}</h2>
+          <button onClick={onClose} className="close-button">×</button>
+        </div>
+
+        {error && (
+          <div className="error-message">
+            {error}
+          </div>
+        )}
+        
+        <div className="character-preview">
+          <p className="preview-hint">Edit the character data below:</p>
+          
+          <div className="preview-section">
+            <label>Name:</label>
+            <input
+              type="text"
+              value={editedData.name}
+              onChange={(e) => updateField('name', e.target.value)}
+            />
+          </div>
+
+          <div className="preview-section">
+            <label>Description:</label>
+            <textarea
+              value={editedData.description}
+              onChange={(e) => updateField('description', e.target.value)}
+              rows="3"
+            />
+          </div>
+
+          <div className="preview-section">
+            <label>Personality:</label>
+            <textarea
+              value={editedData.personality}
+              onChange={(e) => updateField('personality', e.target.value)}
+              rows="3"
+            />
+          </div>
+
+          <div className="preview-section">
+            <label>Current Scene:</label>
+            <textarea
+              value={editedData.currentScene}
+              onChange={(e) => updateField('currentScene', e.target.value)}
+              rows="2"
+            />
+          </div>
+
+          <div className="preview-section">
+            <label>What They Know:</label>
+            {editedData.whatTheyKnow.map((item, index) => (
+              <div key={index} className="array-item">
+                <input
+                  type="text"
+                  value={item}
+                  onChange={(e) => updateArrayField('whatTheyKnow', index, e.target.value)}
+                />
+                <button onClick={() => removeArrayItem('whatTheyKnow', index)}>×</button>
+              </div>
+            ))}
+            <button onClick={() => addArrayItem('whatTheyKnow')} className="add-item">+ Add Knowledge</button>
+          </div>
+
+          <div className="preview-section">
+            <label>Pitfalls:</label>
+            {editedData.pitfalls.map((item, index) => (
+              <div key={index} className="array-item">
+                <input
+                  type="text"
+                  value={item}
+                  onChange={(e) => updateArrayField('pitfalls', index, e.target.value)}
+                />
+                <button onClick={() => removeArrayItem('pitfalls', index)}>×</button>
+              </div>
+            ))}
+            <button onClick={() => addArrayItem('pitfalls')} className="add-item">+ Add Pitfall</button>
+          </div>
+
+          <div className="preview-section">
+            <label>Motivations:</label>
+            {editedData.motivations.map((item, index) => (
+              <div key={index} className="array-item">
+                <input
+                  type="text"
+                  value={item}
+                  onChange={(e) => updateArrayField('motivations', index, e.target.value)}
+                />
+                <button onClick={() => removeArrayItem('motivations', index)}>×</button>
+              </div>
+            ))}
+            <button onClick={() => addArrayItem('motivations')} className="add-item">+ Add Motivation</button>
+          </div>
+
+          <div className="preview-actions">
+            <button onClick={onClose} className="secondary-button">Cancel</button>
+            <button 
+              onClick={handleUpdate} 
+              disabled={isUpdating || !editedData.name.trim()}
+              className="primary-button"
+            >
+              {isUpdating ? 'Updating Character...' : 'Update Character'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// Character Creator Component
+const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
+  const [rawText, setRawText] = useState('');
+  const [parsedData, setParsedData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [step, setStep] = useState('input'); // 'input', 'preview', 'creating'
+  const [error, setError] = useState(null);
+
+  const exampleTexts = [
+    `Thorne Ironfoot is a dwarven merchant with a magnificent braided beard adorned with small gems. He operates the most successful trading post in the mountain pass, dealing in rare minerals and magical components. Despite his friendly demeanor, he's ruthlessly competitive and harbors resentment against the guild that expelled him years ago.`,
+    
+    `Lady Vex is an elegant tiefling noble with silver hair and violet eyes. She maintains a lavish estate outside the capital where she hosts elaborate parties for the political elite. Behind her charm lies a master manipulator who trades in secrets and influences policy through carefully placed bribes and blackmail.`,
+    
+    `Old Henrik is a weathered lighthouse keeper who's been tending the beacon for thirty years. His face is scarred from a kraken attack that cost him his left arm, but he refuses to abandon his post. He knows every ship captain and smuggling route along the coast, and keeps detailed logs of suspicious activities.`
+  ];
+
+  const parseCharacter = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BACKEND_URL}/parse-character`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawText })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to parse character');
+      }
+      
+      const data = await response.json();
+      setParsedData(data);
+      setStep('preview');
+    } catch (error) {
+      console.error('Error parsing character:', error);
+      setError(error.message);
+    }
+    setIsLoading(false);
+  };
+
+  const createCharacter = async () => {
+    setStep('creating');
+    try {
+      const response = await fetch(`${BACKEND_URL}/npcs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsedData)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create character');
+      }
+      
+      const result = await response.json();
+      onCharacterCreated(result.npc.id);
+    } catch (error) {
+      console.error('Error creating character:', error);
+      setError(error.message);
+      setStep('preview');
+    }
+  };
+
+  const useExample = (exampleText) => {
+    setRawText(exampleText);
+  };
+
+  return (
+    <div className="character-creator-modal">
+      <div className="modal-backdrop" onClick={onClose}></div>
+      <div className="character-creator">
+        <div className="creator-header">
+          <h2>Create New Character</h2>
+          <button onClick={onClose} className="close-button">×</button>
+        </div>
+
+        {error && (
+          <div className="error-message">
+            {error}
+          </div>
+        )}
+
+        {step === 'input' && (
+          <div className="creator-input">
+            <p>Describe your character in natural language. Include their appearance, personality, background, and role.</p>
+            
+            <div className="examples-section">
+              <h4>Example descriptions:</h4>
+              <div className="examples">
+                {exampleTexts.map((example, index) => (
+                  <div key={index} className="example-item">
+                    <p>"{example.substring(0, 100)}..."</p>
+                    <button onClick={() => useExample(example)} className="use-example">Use This Example</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <textarea
+              value={rawText}
+              onChange={(e) => setRawText(e.target.value)}
+              placeholder="Example: Gareth is a grizzled old blacksmith with calloused hands and a perpetual scowl. He's been running the forge in this small town for 30 years and knows everyone's business. He's suspicious of outsiders but has a soft spot for genuine craftsmanship..."
+              rows="8"
+              className="character-input"
+            />
+            
+            <div className="input-actions">
+              <button onClick={onClose} className="secondary-button">Cancel</button>
+              <button 
+                onClick={parseCharacter} 
+                disabled={!rawText.trim() || isLoading}
+                className="primary-button"
+              >
+                {isLoading ? 'Parsing Character...' : 'Parse Character'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'preview' && parsedData && (
+          <CharacterPreview 
+            data={parsedData} 
+            onEdit={setParsedData}
+            onCreate={createCharacter}
+            onBack={() => setStep('input')}
+          />
+        )}
+
+        {step === 'creating' && (
+          <div className="creating-character">
+            <h3>Creating Character...</h3>
+            <p>Setting up your new character and saving to the system...</p>
+            <div className="loading-spinner"></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
 
 // Main app content component
 function AppContent({ preSelectedNpcId = null }) {
@@ -146,6 +594,13 @@ function AppContent({ preSelectedNpcId = null }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   
+  // Character creation state
+  const [showCharacterCreator, setShowCharacterCreator] = useState(false);
+  
+  // Character editing state
+  const [showCharacterEditor, setShowCharacterEditor] = useState(false);
+  const [editingCharacterData, setEditingCharacterData] = useState(null);
+  
   // Refs
   const conversationHistories = useRef({});
   const sseSourceRef = useRef(null);
@@ -165,6 +620,81 @@ function AppContent({ preSelectedNpcId = null }) {
       navigate('/');
     }
   }, [navigate]);
+
+  // Character creation
+  const handleCharacterCreated = useCallback(async (newNpcId) => {
+    // Close the creator
+    setShowCharacterCreator(false);
+    
+    // Refresh the NPCs list
+    try {
+      const response = await fetch(`${BACKEND_URL}/npcs`);
+      const data = await response.json();
+      setNpcs(data);
+      
+      // Navigate to the new character
+      handleCharacterChange(newNpcId);
+    } catch (err) {
+      console.error('Error refreshing NPCs list:', err);
+    }
+  }, [handleCharacterChange]);
+
+  const handleCreateNewCharacter = useCallback(() => {
+    setShowCharacterCreator(true);
+  }, []);
+
+  // Character editing
+  const handleEditCharacter = useCallback(() => {
+    if (!selectedNpc) return;
+    
+    // Convert current NPC data to the format expected by CharacterPreview
+    const editData = {
+      id: selectedNpc.id,
+      name: selectedNpc.name || '',
+      description: selectedNpc.description || '',
+      personality: selectedNpc.personality || '',
+      currentScene: selectedNpc.currentScene || '',
+      whatTheyKnow: selectedNpc.whatTheyKnow || [],
+      pitfalls: selectedNpc.pitfalls || [],
+      motivations: selectedNpc.motivations || [],
+      imagePrompt: selectedNpc.imagePrompt || '',
+      voice: selectedNpc.voice || {
+        provider: "elevenlabs",
+        voiceId: "ysswSXp8U9dFpzPJqFje",
+        settings: {
+          stability: 0.55,
+          similarity_boost: 0.7,
+          style: 0.3,
+          use_speaker_boost: true
+        }
+      }
+    };
+    
+    setEditingCharacterData(editData);
+    setShowCharacterEditor(true);
+  }, [selectedNpc]);
+
+  const handleCharacterUpdated = useCallback(async () => {
+    // Close the editor
+    setShowCharacterEditor(false);
+    
+    // Refresh the NPCs list and current NPC context
+    try {
+      const response = await fetch(`${BACKEND_URL}/npcs`);
+      const data = await response.json();
+      setNpcs(data);
+      
+      // Reload the current NPC context
+      if (selectedNpcId) {
+        const contextResponse = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
+        const contextData = await contextResponse.json();
+        setSelectedNpc(contextData);
+        setNpcContext(contextData);
+      }
+    } catch (err) {
+      console.error('Error refreshing data after edit:', err);
+    }
+  }, [selectedNpcId]);
 
   // Speech functionality
   const speakText = useCallback(async (text, npcId = null) => {
@@ -442,7 +972,18 @@ function AppContent({ preSelectedNpcId = null }) {
             npcs={npcs}
             selectedNpcId={selectedNpcId}
             onCharacterChange={handleCharacterChange}
+            showCreateOption={isGMMode}
+            onCreateNew={handleCreateNewCharacter}
           />
+          
+          {isGMMode && (
+            <button 
+              onClick={handleCreateNewCharacter}
+              className="create-character-button primary"
+            >
+              + Create Character
+            </button>
+          )}
           
           <div className="controls-row">
             <div className="voice-controls">
@@ -605,113 +1146,13 @@ function AppContent({ preSelectedNpcId = null }) {
           <h2>Game Master Interface</h2>
           
           {selectedNpc && (
-            <div className="context-form">
-              <div className="form-group">
-                <label htmlFor="npc-name">Name:</label>
-                <input
-                  id="npc-name"
-                  type="text"
-                  value={npcContext.name}
-                  onChange={(e) => setNpcContext({...npcContext, name: e.target.value})}
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-description">Description:</label>
-                <textarea
-                  id="npc-description"
-                  value={npcContext.description}
-                  onChange={(e) => setNpcContext({...npcContext, description: e.target.value})}
-                  rows="3"
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-personality">Personality:</label>
-                <textarea
-                  id="npc-personality"
-                  value={npcContext.personality}
-                  onChange={(e) => setNpcContext({...npcContext, personality: e.target.value})}
-                  rows="3"
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-scene">Current Scene:</label>
-                <textarea
-                  id="npc-scene"
-                  value={npcContext.currentScene}
-                  onChange={(e) => setNpcContext({...npcContext, currentScene: e.target.value})}
-                  rows="2"
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-knowledge">What They Know (one per line):</label>
-                <textarea
-                  id="npc-knowledge"
-                  value={Array.isArray(npcContext.whatTheyKnow) ? npcContext.whatTheyKnow.join('\n') : ''}
-                  onChange={(e) => setNpcContext({
-                    ...npcContext, 
-                    whatTheyKnow: e.target.value.split('\n').filter(item => item.trim())
-                  })}
-                  rows="4"
-                  placeholder="Enter knowledge items, one per line"
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-pitfalls">Pitfalls (one per line):</label>
-                <textarea
-                  id="npc-pitfalls"
-                  value={Array.isArray(npcContext.pitfalls) ? npcContext.pitfalls.join('\n') : ''}
-                  onChange={(e) => setNpcContext({
-                    ...npcContext, 
-                    pitfalls: e.target.value.split('\n').filter(item => item.trim())
-                  })}
-                  rows="3"
-                  placeholder="Enter pitfalls, one per line"
-                />
-              </div>
-              
-              <div className="form-group">
-                <label htmlFor="npc-motivations">Motivations (one per line):</label>
-                <textarea
-                  id="npc-motivations"
-                  value={Array.isArray(npcContext.motivations) ? npcContext.motivations.join('\n') : ''}
-                  onChange={(e) => setNpcContext({
-                    ...npcContext, 
-                    motivations: e.target.value.split('\n').filter(item => item.trim())
-                  })}
-                  rows="3"
-                  placeholder="Enter motivations, one per line"
-                />
-              </div>
-              
-              <div className="form-actions">
+            <div className="gm-controls">
+              <div className="character-actions">
                 <button 
-                  type="button" 
-                  onClick={async () => {
-                    try {
-                      const response = await fetch(`${BACKEND_URL}/context/${selectedNpc.id}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(npcContext)
-                      });
-                      
-                      if (response.ok) {
-                        alert('NPC context updated successfully!');
-                      } else {
-                        throw new Error('Failed to update context');
-                      }
-                    } catch (error) {
-                      console.error('Error updating context:', error);
-                      alert('Error updating NPC context');
-                    }
-                  }}
-                  disabled={isLoadingContext}
+                  className="edit-character-button primary-button"
+                  onClick={handleEditCharacter}
                 >
-                  {isLoadingContext ? 'Updating...' : 'Update NPC Context'}
+                  Edit Character Details
                 </button>
                 
                 <button 
@@ -743,11 +1184,16 @@ function AppContent({ preSelectedNpcId = null }) {
                     }
                   }}
                   disabled={isGenerating}
+                  className="primary-button"
                 >
                   {isGenerating ? 'Generating...' : 'Generate New Image'}
                 </button>
                 
-                <button type="button" onClick={handleClearHistory}>
+                <button 
+                  type="button" 
+                  onClick={handleClearHistory}
+                  className="secondary-button"
+                >
                   Clear Conversation History
                 </button>
               </div>
@@ -755,7 +1201,7 @@ function AppContent({ preSelectedNpcId = null }) {
           )}
           
           {!selectedNpc && (
-            <p>Select an NPC to edit their context and manage the conversation.</p>
+            <p>Select an NPC to manage their details and conversation.</p>
           )}
         </div>
       ) : (
@@ -824,6 +1270,23 @@ function AppContent({ preSelectedNpcId = null }) {
         onAttitudeChange={() => {/* Attitude change logic */}}
         isGMMode={isGMMode}
       />
+
+      {/* Character Creator Modal */}
+      {showCharacterCreator && (
+        <CharacterCreator
+          onCharacterCreated={handleCharacterCreated}
+          onClose={() => setShowCharacterCreator(false)}
+        />
+      )}
+
+      {/* Character Editor Modal */}
+      {showCharacterEditor && editingCharacterData && (
+        <CharacterEditor
+          data={editingCharacterData}
+          onCharacterUpdated={handleCharacterUpdated}
+          onClose={() => setShowCharacterEditor(false)}
+        />
+      )}
     </div>
   );
 }
