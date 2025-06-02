@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, startTransition } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import './App.css';
 import AttitudeSelector from './components/AttitudeSelector';
 
@@ -433,6 +433,10 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
     `Old Henrik is a weathered lighthouse keeper who's been tending the beacon for thirty years. His face is scarred from a kraken attack that cost him his left arm, but he refuses to abandon his post. He knows every ship captain and smuggling route along the coast, and keeps detailed logs of suspicious activities.`
   ];
 
+  const useExample = useCallback((exampleText) => {
+    setRawText(exampleText);
+  }, []);
+
   const parseCharacter = async () => {
     setIsLoading(true);
     setError(null);
@@ -479,10 +483,6 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
       setError(error.message);
       setStep('preview');
     }
-  };
-
-  const useExample = (exampleText) => {
-    setRawText(exampleText);
   };
 
   return (
@@ -561,7 +561,6 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
 // Main app content component
 function AppContent({ preSelectedNpcId = null }) {
   const navigate = useNavigate();
-  const location = useLocation();
   
   // Core state
   const [npcs, setNpcs] = useState([]);
@@ -589,7 +588,6 @@ function AppContent({ preSelectedNpcId = null }) {
     id: '', name: '', description: '', personality: '', currentScene: '',
     whatTheyKnow: [], pitfalls: [], motivations: []
   });
-  const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
@@ -803,7 +801,6 @@ function AppContent({ preSelectedNpcId = null }) {
     
     const loadSelectedNpc = async () => {
       try {
-        setIsLoadingContext(true);
         setIsLoadingImage(true);
         
         const response = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
@@ -811,13 +808,6 @@ function AppContent({ preSelectedNpcId = null }) {
         
         setSelectedNpc(data);
         setNpcContext(data);
-        
-        // Set session data
-        if (data.session) {
-          if (data.session.attitude) setCurrentAttitude(data.session.attitude);
-          if (data.session.patience !== undefined) setPatiencePoints(data.session.patience);
-          if (data.session.interest !== undefined) setInterestPoints(data.session.interest);
-        }
         
         // Handle conversation history
         if (data.conversationHistory?.length > 0) {
@@ -860,7 +850,6 @@ function AppContent({ preSelectedNpcId = null }) {
         console.error('Error loading NPC context:', err);
         setError('Failed to load NPC context');
       } finally {
-        setIsLoadingContext(false);
         setIsLoadingImage(false);
       }
     };

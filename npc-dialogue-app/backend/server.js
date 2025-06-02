@@ -145,7 +145,7 @@ async function loadNpcsFromCloudinary() {
     
     // Get list of all NPC data files from Cloudinary
     const result = await cloudinary.search
-      .expression('resource_type:raw AND folder:npcs/data')
+      .expression('public_id:npcs/data/*')
       .max_results(100)
       .execute();
 
@@ -199,22 +199,27 @@ async function loadNpcsFromCloudinary() {
 fs.readdirSync(NPCS_DIR).forEach(file => {
     if (file.endsWith('.json')) {
         const npcData = JSON.parse(fs.readFileSync(path.join(NPCS_DIR, file), 'utf8'));
-        // Merge with default config and ensure all required fields are present
-        npcs[npcData.id] = {
-            ...npcData,
-            responseTriggers: npcConfig.responseTriggers,
-            // Ensure arrays are initialized if not present
-            whatTheyKnow: npcData.whatTheyKnow || [],
-            pitfalls: npcData.pitfalls || [],
-            motivations: npcData.motivations || [],
-            // Ensure string fields have defaults
-            name: npcData.name || 'Unknown',
-            description: npcData.description || '',
-            personality: npcData.personality || '',
-            currentScene: npcData.currentScene || '',
-            source: 'local'
-        };
-        logInfo(`Loaded NPC ${npcData.id} from local file with response triggers: ${JSON.stringify(npcConfig.responseTriggers)}`);
+        // Only load if not already loaded
+        if (!npcs[npcData.id]) {
+            // Merge with default config and ensure all required fields are present
+            npcs[npcData.id] = {
+                ...npcData,
+                responseTriggers: npcConfig.responseTriggers,
+                // Ensure arrays are initialized if not present
+                whatTheyKnow: npcData.whatTheyKnow || [],
+                pitfalls: npcData.pitfalls || [],
+                motivations: npcData.motivations || [],
+                // Ensure string fields have defaults
+                name: npcData.name || 'Unknown',
+                description: npcData.description || '',
+                personality: npcData.personality || '',
+                currentScene: npcData.currentScene || '',
+                source: 'local'
+            };
+            logInfo(`Loaded NPC ${npcData.id} from local file with response triggers: ${JSON.stringify(npcConfig.responseTriggers)}`);
+        } else {
+            logInfo(`Skipping duplicate NPC ${npcData.id} from local file`);
+        }
     }
 });
 
@@ -801,7 +806,7 @@ app.post('/chat/:npcId', async (req, res) => {
     logToFile(`GPT Prompt:\n${JSON.stringify(messages, null, 2)}`);
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: messages,
       max_tokens: 150,
       temperature: 0.7
@@ -987,6 +992,7 @@ app.post('/generate-image/:npcId', async (req, res) => {
     console.log('Saving updated NPC data to Cloudinary...');
     const cleanNpcData = getCleanNpcData(npc);
     const npcDataBuffer = Buffer.from(JSON.stringify(cleanNpcData, null, 2));
+    console.log(`[${new Date().toISOString()}] Saving NPC data to Cloudinary for ${npcId}:`, cleanNpcData);
     const npcDataUpload = await cloudinary.uploader.upload(
       `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
       {
@@ -996,7 +1002,11 @@ app.post('/generate-image/:npcId', async (req, res) => {
       }
     );
 
-    console.log(`[${new Date().toISOString()}] NPC data saved to Cloudinary:`, npcDataUpload.secure_url);
+    console.log(`[${new Date().toISOString()}] NPC data saved to Cloudinary:`, {
+      public_id: npcDataUpload.public_id,
+      secure_url: npcDataUpload.secure_url,
+      resource_type: npcDataUpload.resource_type
+    });
     
     res.json({ 
         imageUrl: uploadResponse.secure_url,
@@ -1110,6 +1120,86 @@ app.post('/api/npc/:npcId/attitude', (req, res) => {
   }
 });
 
+// Character parsing endpoint
+app.post('/parse-character', async (req, res) => {
+  try {
+    const { rawText } = req.body;
+    
+    if (!rawText || rawText.trim().length < 10) {
+      return res.status(400).json({ error: 'Please provide a character description' });
+    }
+
+    const parsingPrompt = `
+You are a D&D character data parser. Extract character information from the provided text and return ONLY valid JSON in this exact format:
+
+{
+  "name": "Character Name",
+  "description": "Physical appearance and notable features (2-3 sentences)",
+  "personality": "Personality traits, mannerisms, speaking style (2-3 sentences)",
+  "currentScene": "Where they are and what they're doing right now (1-2 sentences)",
+  "whatTheyKnow": ["Specific knowledge item 1", "Specific knowledge item 2", "Specific knowledge item 3", "Specific knowledge item 4"],
+  "pitfalls": ["Potential conversation pitfall or character weakness"],
+  "motivations": ["Primary driving motivation", "Secondary motivation", "Personal goal"]
+}
+
+Rules:
+- Extract concrete, actionable information from the text
+- whatTheyKnow: 3-5 specific facts, secrets, or knowledge they possess
+- pitfalls: 1-3 ways conversations could go wrong or character vulnerabilities
+- motivations: 2-4 driving forces, goals, or desires that motivate the character
+- If information is missing, infer reasonable defaults based on context and common D&D tropes
+- Keep descriptions concise but vivid
+- Return ONLY the JSON object, no other text or formatting
+`;
+
+    const messages = [
+      { role: "system", content: parsingPrompt },
+      { role: "user", content: rawText }
+    ];
+
+    logToFile(`Character Parsing GPT Prompt:\n${JSON.stringify(messages, null, 2)}`);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: messages,
+      temperature: 0.3,
+      max_tokens: 800
+    });
+
+    const rawResponse = completion.choices[0].message.content;
+    logToFile(`Character Parsing GPT Response:\n${rawResponse}`);
+
+    const parsedJson = JSON.parse(rawResponse);
+    
+    // Generate ID and add defaults
+    const id = parsedJson.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const completeData = {
+      ...parsedJson,
+      id,
+      imagePrompt: `Create a portrait of ${parsedJson.name}: ${parsedJson.description} Style: fantasy art, detailed, professional illustration`,
+      voice: {
+        provider: "elevenlabs",
+        voiceId: "ysswSXp8U9dFpzPJqFje",
+        settings: {
+          stability: 0.55,
+          similarity_boost: 0.7,
+          style: 0.3,
+          use_speaker_boost: true
+        }
+      }
+    };
+
+    logInfo(`Parsed character: ${parsedJson.name} (ID: ${id})`);
+    res.json(completeData);
+  } catch (error) {
+    logError('Error parsing character:', error);
+    res.status(500).json({ 
+      error: 'Failed to parse character', 
+      details: error.message 
+    });
+  }
+});
+
 // Add endpoint to create new NPC
 app.post('/npcs', async (req, res) => {
   try {
@@ -1153,6 +1243,7 @@ app.post('/npcs', async (req, res) => {
 
     // Save clean NPC data to Cloudinary
     const npcDataBuffer = Buffer.from(JSON.stringify(completeNpcData, null, 2));
+    console.log(`[${new Date().toISOString()}] Saving NPC data to Cloudinary for ${npcId}:`, completeNpcData);
     const npcDataUpload = await cloudinary.uploader.upload(
       `data:application/json;base64,${npcDataBuffer.toString('base64')}`,
       {
@@ -1161,6 +1252,12 @@ app.post('/npcs', async (req, res) => {
         overwrite: true
       }
     );
+
+    console.log(`[${new Date().toISOString()}] NPC data saved to Cloudinary:`, {
+      public_id: npcDataUpload.public_id,
+      secure_url: npcDataUpload.secure_url,
+      resource_type: npcDataUpload.resource_type
+    });
 
     // Add to local npcs object (with runtime properties)
     npcs[npcId] = {
@@ -1374,6 +1471,81 @@ app.get('/api/characters', (req, res) => {
   }));
   
   res.json(characterList);
+});
+
+// Utility endpoint to verify NPC data in Cloudinary
+app.get('/admin/verify-npc/:npcId', async (req, res) => {
+  try {
+    const { npcId } = req.params;
+    console.log(`[${new Date().toISOString()}] Verifying NPC ${npcId} in Cloudinary...`);
+    
+    // Check for NPC data
+    const dataResult = await cloudinary.search
+      .expression(`public_id:npcs/data/${npcId}`)
+      .max_results(1)
+      .execute();
+    
+    // Check for NPC image
+    const imageResult = await cloudinary.search
+      .expression(`public_id:npcs/images/${npcId}`)
+      .max_results(1)
+      .execute();
+    
+    const verification = {
+      npcId,
+      data: {
+        exists: dataResult.resources.length > 0,
+        details: dataResult.resources[0] || null
+      },
+      image: {
+        exists: imageResult.resources.length > 0,
+        details: imageResult.resources[0] || null
+      }
+    };
+    
+    console.log(`[${new Date().toISOString()}] Verification results for ${npcId}:`, verification);
+    
+    res.json(verification);
+  } catch (error) {
+    console.error('Error verifying NPC:', error);
+    res.status(500).json({ error: 'Failed to verify NPC data' });
+  }
+});
+
+// Add this after the loadNpcsFromCloudinary function
+async function reloadNpcsFromCloudinary() {
+  try {
+    console.log('Reloading NPCs from Cloudinary...');
+    // Clear existing NPCs
+    Object.keys(npcs).forEach(key => delete npcs[key]);
+    // Reload from Cloudinary
+    await loadNpcsFromCloudinary();
+    console.log('NPCs reloaded successfully. Available NPCs:', Object.keys(npcs));
+    return true;
+  } catch (error) {
+    console.error('Error reloading NPCs:', error);
+    return false;
+  }
+}
+
+// Add this before the server start
+// Endpoint to reload NPCs from Cloudinary
+app.post('/admin/reload-npcs', async (req, res) => {
+  try {
+    const success = await reloadNpcsFromCloudinary();
+    if (success) {
+      res.json({ 
+        success: true, 
+        message: 'NPCs reloaded successfully',
+        availableNpcs: Object.keys(npcs)
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to reload NPCs' });
+    }
+  } catch (error) {
+    console.error('Error in reload endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Start the server
