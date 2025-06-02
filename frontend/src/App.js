@@ -48,31 +48,6 @@ const InterestIcon = React.memo(() => (
 ));
 
 // Generic attribute components
-const AttributePoints = React.memo(({ points, maxPoints = 5, activeColor = '#4CAF50', className = 'patience-points' }) => {
-  let color = activeColor;
-  if (points <= 1) color = '#F44336';
-  else if (points <= 2) color = '#FF9800';
-  else if (points <= 3) color = '#FFC107';
-  
-  const safePoints = Math.max(0, Math.min(5, Number(points) || 0));
-  
-  return (
-    <div className={className}>
-      {Array.from({ length: maxPoints }, (_, i) => {
-        const isActive = i < safePoints;
-        const pointClass = className.replace('points', 'point');
-        return (
-          <div 
-            key={i} 
-            className={`${pointClass} ${isActive ? 'active' : ''}`}
-            style={{ backgroundColor: isActive ? color : 'transparent' }}
-          />
-        );
-      })}
-    </div>
-  );
-});
-
 const AttributeTracker = React.memo(({ label, value, icon, onIncrement, onDecrement, isGmMode }) => {
   const color = getAttributeColor(value);
   
