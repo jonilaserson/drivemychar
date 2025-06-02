@@ -433,7 +433,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
     `Old Henrik is a weathered lighthouse keeper who's been tending the beacon for thirty years. His face is scarred from a kraken attack that cost him his left arm, but he refuses to abandon his post. He knows every ship captain and smuggling route along the coast, and keeps detailed logs of suspicious activities.`
   ];
 
-  const useExample = useCallback((exampleText) => {
+  const handleExampleClick = useCallback((exampleText) => {
     setRawText(exampleText);
   }, []);
 
@@ -510,7 +510,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
                 {exampleTexts.map((example, index) => (
                   <div key={index} className="example-item">
                     <p>"{example.substring(0, 100)}..."</p>
-                    <button onClick={() => useExample(example)} className="use-example">Use This Example</button>
+                    <button onClick={() => handleExampleClick(example)} className="use-example">Use This Example</button>
                   </div>
                 ))}
               </div>
@@ -1256,7 +1256,7 @@ function AppContent({ preSelectedNpcId = null }) {
 
       <AttitudeSelector
         currentAttitude={currentAttitude}
-        onAttitudeChange={() => {/* Attitude change logic */}}
+        onAttitudeChange={(newAttitude) => setCurrentAttitude(newAttitude)}
         isGMMode={isGMMode}
       />
 
