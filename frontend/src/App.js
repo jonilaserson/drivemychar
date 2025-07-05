@@ -660,23 +660,6 @@ function AppContent({ preSelectedNpcId = null }) {
     return fetch(url, { ...options, headers });
   };
 
-  // Update context fetching to include access control info
-  const fetchNpcContext = async (npcId) => {
-    try {
-      const response = await fetchWithAuth(`${BACKEND_URL}/context/${npcId}`);
-      const data = await response.json();
-      
-      if (data.access) {
-        setIsGMMode(data.access.canUseGMFeatures);
-      }
-      
-      return data;
-    } catch (error) {
-      console.error('Error fetching NPC context:', error);
-      throw error;
-    }
-  };
-
   // Character management
   const handleCharacterChange = useCallback((newNpcId) => {
     setSelectedNpcId(newNpcId);
