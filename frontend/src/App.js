@@ -287,7 +287,7 @@ const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose }) => {
     setIsUpdating(true);
     setError(null);
     try {
-      const response = await fetch(`${BACKEND_URL}/context/${editedData.id}`, {
+      const response = await fetchWithAuth(`${BACKEND_URL}/context/${editedData.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData)
@@ -446,7 +446,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${BACKEND_URL}/parse-character`, {
+      const response = await fetchWithAuth(`${BACKEND_URL}/parse-character`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rawText })
@@ -470,7 +470,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
   const createCharacter = async () => {
     setStep('creating');
     try {
-      const response = await fetch(`${BACKEND_URL}/npcs`, {
+      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsedData)
@@ -677,7 +677,7 @@ function AppContent({ preSelectedNpcId = null }) {
     
     // Refresh the NPCs list
     try {
-      const response = await fetch(`${BACKEND_URL}/npcs`);
+      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`);
       const data = await response.json();
       setNpcs(data);
       
@@ -729,13 +729,13 @@ function AppContent({ preSelectedNpcId = null }) {
     
     // Refresh the NPCs list and current NPC context
     try {
-      const response = await fetch(`${BACKEND_URL}/npcs`);
+      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`);
       const data = await response.json();
       setNpcs(data);
       
       // Reload the current NPC context
       if (selectedNpcId) {
-        const contextResponse = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
+        const contextResponse = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`);
         const contextData = await contextResponse.json();
         setSelectedNpc(contextData);
         setNpcContext(contextData);
@@ -762,7 +762,7 @@ function AppContent({ preSelectedNpcId = null }) {
         return;
       }
 
-      const response = await fetch(`${BACKEND_URL}/speak/${currentNpcId}`, {
+      const response = await fetchWithAuth(`${BACKEND_URL}/speak/${currentNpcId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
@@ -793,7 +793,7 @@ function AppContent({ preSelectedNpcId = null }) {
     setError(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/chat/${selectedNpc.id}`, {
+      const response = await fetchWithAuth(`${BACKEND_URL}/chat/${selectedNpc.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -854,7 +854,7 @@ function AppContent({ preSelectedNpcId = null }) {
       try {
         setIsLoadingImage(true);
         
-        const response = await fetch(`${BACKEND_URL}/context/${selectedNpcId}`);
+        const response = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`);
         const data = await response.json();
         
         setSelectedNpc(data);
@@ -918,7 +918,7 @@ function AppContent({ preSelectedNpcId = null }) {
     
     setter(newValue);
     
-    fetch(`${BACKEND_URL}/api/npc/${selectedNpc.id}/${type}`, {
+    fetchWithAuth(`${BACKEND_URL}/api/npc/${selectedNpc.id}/${type}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adjustment })
@@ -946,7 +946,7 @@ function AppContent({ preSelectedNpcId = null }) {
       setConversationHistory([]);
       conversationHistories.current[selectedNpc.id] = [];
       
-      await fetch(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
+      await fetchWithAuth(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
