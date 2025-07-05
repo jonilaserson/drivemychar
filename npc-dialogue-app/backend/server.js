@@ -8,6 +8,19 @@ const fetch = require('node-fetch');
 const { formatPrompt } = require('./utils/promptFormatter');
 const { checkRateLimit } = require('./utils/rateLimiter');
 const { logRequest, logError, logInfo } = require('./utils/logger');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const User = require('./models/User');
+const NPCOwnership = require('./models/NPCOwnership');
+const { authenticateToken, optionalAuth } = require('./middleware/auth');
+const { checkOwnership, checkAccess } = require('./middleware/ownership');
+
+// Add Passport configuration
+const passport = require('passport');
+require('./config/passport');
 
 // Add Cloudinary configuration
 const cloudinary = require('cloudinary').v2;
@@ -22,6 +35,31 @@ cloudinary.config({
 console.log('Cloudinary configured with cloud name:', process.env.CLOUDINARY_CLOUD_NAME);
 
 const app = express();
+
+// Connect to MongoDB with error handling
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/npc-dialogue-app')
+  .then(() => {
+    console.log('Connected to MongoDB successfully');
+  })
+  .catch((error) => {
+    console.error('MongoDB connection error:', error.message);
+    console.log('Server will continue without database functionality');
+    console.log('To enable full functionality, please install MongoDB or use MongoDB Atlas');
+  });
+
+// Add session middleware (using memory store for now)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === 'production' }
+}));
+
+console.log('Using memory session store (sessions will be lost on restart)');
+
+// Initialize passport
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Ensure all required directories exist
 const REQUIRED_DIRS = [
@@ -101,6 +139,67 @@ app.use('/images', (req, res, next) => {
 // Serve admin page
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Google OAuth routes (only if configured)
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  app.get('/auth/google', passport.authenticate('google', { 
+    scope: ['profile', 'email'] 
+  }));
+
+  app.get('/auth/google/callback', 
+    passport.authenticate('google', { failureRedirect: '/login' }),
+    (req, res) => {
+      // Generate JWT token
+      const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      
+      // Redirect to frontend with token
+      res.redirect(`${process.env.FRONTEND_URL}/auth-callback?token=${token}`);
+    }
+  );
+} else {
+  // Fallback routes when Google OAuth is not configured
+  app.get('/auth/google', (req, res) => {
+    res.status(503).json({ error: 'Google OAuth not configured' });
+  });
+  
+  app.get('/auth/google/callback', (req, res) => {
+    res.status(503).json({ error: 'Google OAuth not configured' });
+  });
+}
+
+// Simple login status check
+app.get('/auth/status', (req, res) => {
+  if (req.user) {
+    res.json({ 
+      authenticated: true, 
+      user: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        picture: req.user.picture
+      }
+    });
+  } else {
+    res.json({ authenticated: false });
+  }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  res.json({
+    status: 'ok',
+    database: dbStatus,
+    googleOAuth: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)
+  });
+});
+
+// Logout
+app.get('/auth/logout', (req, res) => {
+  req.logout(() => {
+    res.json({ success: true });
+  });
 });
 
 // Set up logging
@@ -387,7 +486,7 @@ process.on('SIGTERM', () => {
 });
 
 // Modified context endpoint - handle both paths
-app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
+app.get(['/api/context/:npcId', '/context/:npcId'], optionalAuth, checkAccess, async (req, res) => {
   try {
     const { npcId } = req.params;
     const npc = npcs[npcId];
@@ -434,12 +533,17 @@ app.get(['/api/context/:npcId', '/context/:npcId'], async (req, res) => {
       session: {
         id: session.sessionId,
         patience: session.patience,
-        interest: session.interest, // Include interest in the response
+        interest: session.interest,
         lastUpdated: session.lastActive
       },
       localImagePath: localImagePath,
       imageUrl: imageUrl,
-      conversationHistory: session.messages // Include server-side conversation history
+      conversationHistory: session.messages,
+      access: {
+        isOwner: req.isOwner,
+        canEdit: req.isOwner,
+        canUseGMFeatures: req.isOwner
+      }
     });
   } catch (error) {
     logError('Error in context endpoint:', error);
@@ -512,7 +616,7 @@ function broadcastAttributeUpdate(npcId, type, value) {
 }
 
 // Endpoint for GM to adjust patience
-app.post('/api/npc/:npcId/patience', (req, res) => {
+app.post('/api/npc/:npcId/patience', authenticateToken, checkOwnership, (req, res) => {
   try {
     const { npcId } = req.params;
     const { adjustment } = req.body;
@@ -541,7 +645,7 @@ app.post('/api/npc/:npcId/patience', (req, res) => {
 });
 
 // Endpoint for GM to adjust interest
-app.post('/api/npc/:npcId/interest', (req, res) => {
+app.post('/api/npc/:npcId/interest', authenticateToken, checkOwnership, (req, res) => {
   try {
     const { npcId } = req.params;
     const { adjustment } = req.body;
@@ -1082,7 +1186,7 @@ app.get('/api/events/:npcId', (req, res) => {
 });
 
 // Add endpoint for setting NPC attitude
-app.post('/api/npc/:npcId/attitude', (req, res) => {
+app.post('/api/npc/:npcId/attitude', authenticateToken, checkOwnership, (req, res) => {
   try {
     const { npcId } = req.params;
     const { attitude } = req.body;
@@ -1201,20 +1305,30 @@ Rules:
 });
 
 // Add endpoint to create new NPC
-app.post('/npcs', async (req, res) => {
+app.post('/npcs', authenticateToken, async (req, res) => {
   try {
     const npcData = req.body;
-    const npcId = npcData.id.toLowerCase().replace(/[^a-z0-9]/g, ''); // Sanitize ID
+    const npcId = npcData.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const userId = req.user._id;
 
     // Validate required fields
     if (!npcId || !npcData.name || !npcData.description) {
-      return res.status(400).json({ error: 'Missing required fields: id, name, description' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     // Check if NPC already exists
-    if (npcs[npcId]) {
+    const existingOwnership = await NPCOwnership.findOne({ npcId });
+    if (existingOwnership) {
       return res.status(409).json({ error: 'NPC with this ID already exists' });
     }
+
+    // Create ownership record
+    const ownership = new NPCOwnership({
+      npcId,
+      ownerId: userId,
+      shareToken: generateShareToken()
+    });
+    await ownership.save();
 
     // Prepare NPC data with defaults
     const completeNpcData = {
@@ -1273,7 +1387,7 @@ app.post('/npcs', async (req, res) => {
     res.json({
       success: true,
       npc: completeNpcData,
-      dataUrl: npcDataUpload.secure_url
+      shareUrl: `${req.protocol}://${req.get('host')}/npc/${npcId}?token=${ownership.shareToken}`
     });
   } catch (error) {
     console.error('Error creating NPC:', error);
@@ -1547,6 +1661,32 @@ app.post('/admin/reload-npcs', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// New endpoint to get user's NPCs
+app.get('/api/my-npcs', authenticateToken, async (req, res) => {
+  try {
+    const ownerships = await NPCOwnership.find({ ownerId: req.user._id });
+    const userNpcs = ownerships.map(ownership => {
+      const npc = npcs[ownership.npcId];
+      return npc ? {
+        id: npc.id,
+        name: npc.name,
+        description: npc.description,
+        imageUrl: npc.imageUrl,
+        shareUrl: `${req.protocol}://${req.get('host')}/npc/${npc.id}?token=${ownership.shareToken}`
+      } : null;
+    }).filter(Boolean);
+    
+    res.json(userNpcs);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get user NPCs' });
+  }
+});
+
+// Helper function to generate share tokens
+function generateShareToken() {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
 
 // Start the server
 const PORT = process.env.PORT || 3000;
