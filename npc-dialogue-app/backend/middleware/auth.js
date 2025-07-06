@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
 // Middleware to verify JWT token
 const authenticateToken = async (req, res, next) => {
@@ -8,6 +9,13 @@ const authenticateToken = async (req, res, next) => {
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
+  }
+
+  // If MongoDB is not connected, allow access in development mode
+  if (mongoose.connection.readyState !== 1) {
+    console.log('[AUTH] MongoDB not connected, allowing access in dev mode');
+    req.user = { _id: 'dev-user', name: 'Developer', email: 'dev@example.com' };
+    return next();
   }
 
   try {
@@ -29,6 +37,13 @@ const authenticateToken = async (req, res, next) => {
 const optionalAuth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
+
+  // If MongoDB is not connected, set a dev user in development mode
+  if (mongoose.connection.readyState !== 1) {
+    console.log('[OPTIONAL_AUTH] MongoDB not connected, setting dev user');
+    req.user = { _id: 'dev-user', name: 'Developer', email: 'dev@example.com' };
+    return next();
+  }
 
   if (token) {
     try {

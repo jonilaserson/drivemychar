@@ -125,7 +125,7 @@ const CharacterSelector = React.memo(({ npcs, selectedNpcId, onCharacterChange, 
 ));
 
 // Character Preview Component
-const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack }) => {
+const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack, authToken }) => {
   const [editedData, setEditedData] = useState(data);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -257,7 +257,7 @@ const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack }) => {
 });
 
 // Character Editor Component (for editing existing characters)
-const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose }) => {
+const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose, authToken }) => {
   const [editedData, setEditedData] = useState(data);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState(null);
@@ -291,7 +291,7 @@ const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData)
-      });
+      }, authToken);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -423,7 +423,7 @@ const CharacterEditor = React.memo(({ data, onCharacterUpdated, onClose }) => {
 });
 
 // Character Creator Component
-const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
+const CharacterCreator = React.memo(({ onCharacterCreated, onClose, authToken }) => {
   const [rawText, setRawText] = useState('');
   const [parsedData, setParsedData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -450,7 +450,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rawText })
-      });
+      }, authToken);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -474,7 +474,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsedData)
-      });
+      }, authToken);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -548,6 +548,7 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose }) => {
             onEdit={setParsedData}
             onCreate={createCharacter}
             onBack={() => setStep('input')}
+            authToken={authToken}
           />
         )}
 
@@ -646,19 +647,17 @@ function AppContent({ preSelectedNpcId = null }) {
     }
   }, []);
 
-  // Update API calls to include authentication headers
-  const fetchWithAuth = (url, options = {}) => {
+  // Move fetchWithAuth to top level
+  function fetchWithAuth(url, options = {}, authToken) {
     const headers = {
       'Content-Type': 'application/json',
       ...options.headers
     };
-    
     if (authToken) {
       headers.Authorization = `Bearer ${authToken}`;
     }
-    
     return fetch(url, { ...options, headers });
-  };
+  }
 
   // Character management
   const handleCharacterChange = useCallback((newNpcId) => {
@@ -677,7 +676,7 @@ function AppContent({ preSelectedNpcId = null }) {
     
     // Refresh the NPCs list
     try {
-      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`);
+      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`, {}, authToken);
       const data = await response.json();
       setNpcs(data);
       
@@ -729,13 +728,13 @@ function AppContent({ preSelectedNpcId = null }) {
     
     // Refresh the NPCs list and current NPC context
     try {
-      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`);
+      const response = await fetchWithAuth(`${BACKEND_URL}/npcs`, {}, authToken);
       const data = await response.json();
       setNpcs(data);
       
       // Reload the current NPC context
       if (selectedNpcId) {
-        const contextResponse = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`);
+        const contextResponse = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`, {}, authToken);
         const contextData = await contextResponse.json();
         setSelectedNpc(contextData);
         setNpcContext(contextData);
@@ -766,7 +765,7 @@ function AppContent({ preSelectedNpcId = null }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
-      });
+      }, authToken);
 
       if (!response.ok) throw new Error('Failed to generate speech');
 
@@ -801,7 +800,7 @@ function AppContent({ preSelectedNpcId = null }) {
           conversationHistory,
           clientId: CLIENT_ID
         }),
-      });
+      }, authToken);
 
       const data = await response.json();
       if (data.error) throw new Error(data.error);
@@ -826,7 +825,7 @@ function AppContent({ preSelectedNpcId = null }) {
     
     const loadNpcs = async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/npcs`);
+        const response = await fetchWithAuth(`${BACKEND_URL}/npcs`, {}, authToken);
         const data = await response.json();
         setNpcs(data);
         if (data.length > 0 && !preSelectedNpcId) {
@@ -854,7 +853,7 @@ function AppContent({ preSelectedNpcId = null }) {
       try {
         setIsLoadingImage(true);
         
-        const response = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`);
+        const response = await fetchWithAuth(`${BACKEND_URL}/context/${selectedNpcId}`, {}, authToken);
         const data = await response.json();
         
         setSelectedNpc(data);
@@ -922,7 +921,7 @@ function AppContent({ preSelectedNpcId = null }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adjustment })
-    }).then(response => {
+    }, authToken).then(response => {
       if (response.ok) return response.json();
       throw new Error(`Error adjusting ${type}`);
     }).then(data => {
@@ -949,7 +948,7 @@ function AppContent({ preSelectedNpcId = null }) {
       await fetchWithAuth(`${BACKEND_URL}/clear-history/${selectedNpc.id}?client=${CLIENT_ID}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
-      });
+      }, authToken);
     } catch (err) {
       console.error('Error clearing conversation history:', err);
       setError('Failed to clear conversation history');
@@ -1329,6 +1328,7 @@ function AppContent({ preSelectedNpcId = null }) {
         <CharacterCreator
           onCharacterCreated={handleCharacterCreated}
           onClose={() => setShowCharacterCreator(false)}
+          authToken={authToken}
         />
       )}
 
@@ -1338,6 +1338,7 @@ function AppContent({ preSelectedNpcId = null }) {
           data={editingCharacterData}
           onCharacterUpdated={handleCharacterUpdated}
           onClose={() => setShowCharacterEditor(false)}
+          authToken={authToken}
         />
       )}
     </div>
