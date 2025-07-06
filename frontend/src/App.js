@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import './App.css';
 import AttitudeSelector from './components/AttitudeSelector';
 
@@ -18,7 +18,7 @@ const BACKEND_URL = process.env.REACT_APP_USE_LOCAL_BACKEND === 'true'
   : 'https://drivemychar.onrender.com';
 const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
 
-console.log('[CONFIG] Backend URL:', BACKEND_URL, 'Client ID:', CLIENT_ID);
+console.warn('[CONFIG] Backend URL:', BACKEND_URL, 'Client ID:', CLIENT_ID);
 
 // Move fetchWithAuth to top level
 function fetchWithAuth(url, options = {}, authToken) {
@@ -137,7 +137,7 @@ const CharacterSelector = React.memo(({ npcs, selectedNpcId, onCharacterChange, 
 ));
 
 // Character Preview Component
-const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack, authToken }) => {
+const CharacterPreview = React.memo(({ data, onEdit, onCreate, onBack }) => {
   const [editedData, setEditedData] = useState(data);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -560,7 +560,6 @@ const CharacterCreator = React.memo(({ onCharacterCreated, onClose, authToken })
             onEdit={setParsedData}
             onCreate={createCharacter}
             onBack={() => setStep('input')}
-            authToken={authToken}
           />
         )}
 
@@ -685,7 +684,7 @@ function AppContent({ preSelectedNpcId = null }) {
     } catch (err) {
       console.error('Error refreshing NPCs list:', err);
     }
-  }, [handleCharacterChange]);
+  }, [handleCharacterChange, authToken]);
 
   const handleCreateNewCharacter = useCallback(() => {
     setShowCharacterCreator(true);
@@ -742,7 +741,7 @@ function AppContent({ preSelectedNpcId = null }) {
     } catch (err) {
       console.error('Error refreshing data after edit:', err);
     }
-  }, [selectedNpcId]);
+  }, [selectedNpcId, authToken]);
 
   // Speech functionality
   const speakText = useCallback(async (text, npcId = null) => {
@@ -781,7 +780,7 @@ function AppContent({ preSelectedNpcId = null }) {
       console.error('Error speaking text:', error);
       setIsSpeaking(false);
     }
-  }, [isSpeechEnabled, npcContext.id]);
+  }, [isSpeechEnabled, npcContext.id, authToken]);
 
   // Chat functionality
   const handleSubmit = useCallback(async (e) => {
@@ -817,7 +816,7 @@ function AppContent({ preSelectedNpcId = null }) {
     } finally {
       setIsLoading(false);
     }
-  }, [playerInput, selectedNpc, conversationHistory, isSpeechEnabled, speakText]);
+  }, [playerInput, selectedNpc, conversationHistory, isSpeechEnabled, speakText, authToken]);
 
   // Load NPCs on mount
   useEffect(() => {
@@ -831,12 +830,12 @@ function AppContent({ preSelectedNpcId = null }) {
         if (data.length > 0 && !preSelectedNpcId) {
           setSelectedNpcId(data[0].id);
         }
-      } catch (err) {
+      } catch {
         setError('Failed to load NPCs');
       }
     };
     loadNpcs();
-  }, [npcs.length, preSelectedNpcId]);
+  }, [npcs.length, preSelectedNpcId, authToken]);
 
   // Handle URL changes
   useEffect(() => {
@@ -905,7 +904,7 @@ function AppContent({ preSelectedNpcId = null }) {
     };
 
     loadSelectedNpc();
-  }, [selectedNpcId]);
+  }, [selectedNpcId, authToken]);
 
   // Attribute adjustment functions
   const adjustAttribute = useCallback((type, adjustment) => {
@@ -930,7 +929,7 @@ function AppContent({ preSelectedNpcId = null }) {
       console.error(`Error adjusting ${type}:`, error);
       setter(currentValue);
     });
-  }, [selectedNpc, patiencePoints, interestPoints]);
+  }, [selectedNpc, patiencePoints, interestPoints, authToken]);
 
   // Clear conversation history
   const handleClearHistory = useCallback(async () => {
@@ -953,7 +952,7 @@ function AppContent({ preSelectedNpcId = null }) {
       console.error('Error clearing conversation history:', err);
       setError('Failed to clear conversation history');
     }
-  }, [selectedNpc]);
+  }, [selectedNpc, authToken]);
 
   // Speech recognition setup
   useEffect(() => {
