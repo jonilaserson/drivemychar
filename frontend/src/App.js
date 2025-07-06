@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 import './App.css';
 import AttitudeSelector from './components/AttitudeSelector';
 
@@ -19,6 +19,18 @@ const BACKEND_URL = process.env.REACT_APP_USE_LOCAL_BACKEND === 'true'
 const CLIENT_ID = `client_${Math.random().toString(36).substring(2, 9)}`;
 
 console.log('[CONFIG] Backend URL:', BACKEND_URL, 'Client ID:', CLIENT_ID);
+
+// Move fetchWithAuth to top level
+function fetchWithAuth(url, options = {}, authToken) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  return fetch(url, { ...options, headers });
+}
 
 // Authentication state - moved inside components
 
@@ -646,18 +658,6 @@ function AppContent({ preSelectedNpcId = null }) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
-
-  // Move fetchWithAuth to top level
-  function fetchWithAuth(url, options = {}, authToken) {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...options.headers
-    };
-    if (authToken) {
-      headers.Authorization = `Bearer ${authToken}`;
-    }
-    return fetch(url, { ...options, headers });
-  }
 
   // Character management
   const handleCharacterChange = useCallback((newNpcId) => {
