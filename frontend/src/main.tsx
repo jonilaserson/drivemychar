@@ -78,18 +78,82 @@ function App() {
           <div id="gsi-btn" />
         </div>
       ) : (
-        <div>
-          <p>Signed in as {user.displayName || user.email}</p>
-          <button
-            onClick={async () => {
-              await logout();
-              setUser(null);
-            }}
-          >
-            Sign out
-          </button>
-        </div>
+        <AuthedHome user={user} onSignOut={async () => { await logout(); setUser(null); }} />
       )}
+    </div>
+  );
+}
+
+function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
+  const [npcs, setNpcs] = React.useState<any[]>([]);
+  const [creating, setCreating] = React.useState(false);
+  const [paragraph, setParagraph] = React.useState('');
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+
+  async function loadNpcs() {
+    const res = await fetch(`${API_BASE}/npcs`, { credentials: 'include' });
+    const data = await res.json();
+    setNpcs(data.npcs || []);
+  }
+
+  React.useEffect(() => {
+    loadNpcs();
+  }, []);
+
+  async function createNpc() {
+    setCreating(true);
+    try {
+      const res = await fetch(`${API_BASE}/npcs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ paragraph }),
+      });
+      if (res.ok) {
+        setParagraph('');
+        await loadNpcs();
+      }
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div>
+      <p>Signed in as {user.displayName || user.email}</p>
+      <button onClick={onSignOut}>Sign out</button>
+
+      <h2 style={{ marginTop: 24 }}>Your NPCs</h2>
+      <div style={{ display: 'grid', gap: 12 }}>
+        {npcs.map((n) => (
+          <div key={n.id} style={{ border: '1px solid #ddd', padding: 12, borderRadius: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {n.image_url && (
+                <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
+              )}
+              <div>
+                <div style={{ fontWeight: 600 }}>{n.name}</div>
+                <div style={{ fontSize: 12, color: '#555' }}>id: {n.id}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+        {npcs.length === 0 && <div>No NPCs yet.</div>}
+      </div>
+
+      <h3 style={{ marginTop: 24 }}>Create NPC</h3>
+      <textarea
+        placeholder="Paste a short paragraph describing your NPC"
+        value={paragraph}
+        onChange={(e) => setParagraph(e.target.value)}
+        rows={4}
+        style={{ width: '100%', maxWidth: 600 }}
+      />
+      <div>
+        <button disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
+          {creating ? 'Creating...' : 'Create'}
+        </button>
+      </div>
     </div>
   );
 }
