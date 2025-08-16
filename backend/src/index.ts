@@ -49,6 +49,29 @@ app.use((req, _res, next) => {
 const googleClientId = process.env.GOOGLE_CLIENT_ID || '';
 const oauthClient = new OAuth2Client(googleClientId);
 
+// Hydrate missing DB user id for older sessions
+app.use(async (req, _res, next) => {
+  try {
+    if (req.user && (!req.user.id || Number.isNaN(Number(req.user.id))) && req.user.sub) {
+      const { rows } = await query<{ id: number; role: 'user' | 'admin'; email: string | null; display_name: string | null }>(
+        'select id, role, email, display_name from users where google_sub = $1',
+        [req.user.sub],
+      );
+      const row = rows[0];
+      if (row) {
+        req.user.id = row.id;
+        req.user.role = row.role;
+        req.user.email = row.email;
+        req.user.displayName = row.display_name;
+        (req.session as any).user = req.user;
+      }
+    }
+  } catch {
+    // ignore hydration failures; downstream will 401/403 as needed
+  }
+  next();
+});
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -136,6 +159,18 @@ function mockParseParagraphToSections(paragraph: string): NpcSections {
   };
 }
 
+function pickSeedImageUrl(): string | null {
+  const raw = process.env.SEED_NPC_IMAGE_URL || '';
+  if (!raw) return null;
+  const parts = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (parts.length === 0) return null;
+  const idx = Math.floor(Math.random() * parts.length);
+  return parts[idx] || null;
+}
+
 app.get('/npcs', requireAuth, async (req, res) => {
   const { rows } = await query(
     'select id, owner_id, name, sections_json, image_url, voice_id, defaults_json, created_at, updated_at from npcs where owner_id = $1 order by updated_at desc',
@@ -161,7 +196,7 @@ app.post('/npcs', requireAuth, async (req, res) => {
   const { paragraph, name } = req.body as { paragraph?: string; name?: string };
   if (!paragraph || paragraph.trim().length < 5) return res.status(400).json({ error: 'paragraph too short' });
   const sections = mockParseParagraphToSections(paragraph);
-  const seedUrl = process.env.SEED_NPC_IMAGE_URL || null;
+  const seedUrl = pickSeedImageUrl();
   const defaults = { patience: 5, interest: 5 };
   const insertSql = `
     insert into npcs (owner_id, name, sections_json, image_url, voice_id, defaults_json)
@@ -222,7 +257,7 @@ app.post('/npcs/:id/regen-image', requireAuth, async (req, res) => {
   const own = ownerRows[0];
   if (!own) return res.status(404).json({ error: 'not found' });
   if (own.owner_id !== req.user!.id && req.user!.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
-  const seedUrl = process.env.SEED_NPC_IMAGE_URL || null;
+  const seedUrl = pickSeedImageUrl();
   const { rows } = await query(
     'update npcs set image_url = $1, updated_at = now() where id = $2 returning id, owner_id, name, sections_json, image_url, voice_id, defaults_json, created_at, updated_at',
     [seedUrl, id],
