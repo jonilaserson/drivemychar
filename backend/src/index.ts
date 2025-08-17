@@ -312,6 +312,33 @@ app.post('/npcs/:id/regen-image', requireAuth, async (req, res) => {
   res.json({ npc: rows[0] });
 });
 
+app.delete('/npcs/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad id' });
+    const { rows: ownerRows } = await query('select owner_id from npcs where id = $1', [id]);
+    const own = ownerRows[0];
+    if (!own) return res.status(404).json({ error: 'not found' });
+    if (own.owner_id !== req.user!.id && req.user!.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+
+    // Clear FK to encounters to allow deletion
+    await query('update npcs set current_encounter_id = null where id = $1', [id]);
+    // Delete encounter messages for this NPC's encounters
+    await query(
+      'delete from encounter_messages where encounter_id in (select id from encounters where npc_id = $1)',
+      [id],
+    );
+    // Delete encounters
+    await query('delete from encounters where npc_id = $1', [id]);
+    // Delete NPC
+    await query('delete from npcs where id = $1', [id]);
+
+    await audit(req.user!.id, 'npc.delete', 'npc', id);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: 'delete_failed' });
+  }
+});
 // --- Encounters --- (public access via slug)
 function generateSlug(): string {
   return crypto.randomBytes(6).toString('base64url');

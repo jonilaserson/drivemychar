@@ -257,9 +257,10 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button onClick={() => setSelectedNpcId(n.id)}>Edit</button>
                       {n.current_encounter_slug && (
-                        <button onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Launch encounter</button>
+                        <button onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Enter encounter</button>
                       )}
                       <CreateNewEncounterButton onCreated={async () => { await loadNpcs(); }} npcId={n.id} />
+                      <DeleteNpcButton npcId={n.id} onDeleted={async () => { await loadNpcs(); }} />
                     </div>
                   </div>
                 </div>
@@ -282,7 +283,6 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
                 <button disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
                   {creating ? 'Creating...' : 'Create'}
                 </button>
-                <button style={{ marginLeft: 8 }} onClick={() => setShowCreate(false)}>Back to list</button>
               </div>
             </>
           )}
@@ -410,6 +410,7 @@ function NpcEditor({ npcId, onBack }: { npcId: number; onBack: () => void }) {
         <LaunchEncounterButton npcId={npcId} onCreated={(slug) => {
           window.open(`/e/${slug}`, '_blank');
         }} />
+        <DeleteNpcButton npcId={npcId} onDeleted={onBack} />
       </div>
     </div>
   );
@@ -455,7 +456,7 @@ function LaunchEncounterButton({ npcId, onCreated }: { npcId: number; onCreated:
   return (
     <span>
       <button style={{ marginLeft: 8 }} disabled={creating} onClick={launch}>
-        {creating ? 'Launching...' : 'Launch encounter'}
+        {creating ? 'Entering...' : 'Enter encounter'}
       </button>
       {copied && <span style={{ marginLeft: 8, color: '#0a0' }}>Link copied</span>}
     </span>
@@ -497,6 +498,24 @@ function CopyLinkButton({ link }: { link: string }) {
       <button onClick={copy} style={{ fontSize: 12 }}>Copy link</button>
       {copied && <span style={{ marginLeft: 6, color: '#0a0', fontSize: 12 }}>Copied</span>}
     </span>
+  );
+}
+
+function DeleteNpcButton({ npcId, onDeleted }: { npcId: number; onDeleted: () => void }) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const [busy, setBusy] = React.useState(false);
+  async function removeNpc() {
+    if (!confirm('Delete this NPC and all its encounters? This cannot be undone.')) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/npcs/${npcId}`, { method: 'DELETE', credentials: 'include' });
+      if (res.ok) onDeleted();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button disabled={busy} onClick={removeNpc} style={{ color: '#a00' }}>{busy ? 'Deleting...' : 'Delete'}</button>
   );
 }
 
@@ -598,7 +617,10 @@ function EncounterHeader({ enc }: { enc: any }) {
   const [copied, setCopied] = React.useState(false);
   async function copy() {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      // Build shareable link (LAN/public host if configured)
+      const base = getShareBaseUrl();
+      const link = `${base}/e/${enc.slug}`;
+      await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
