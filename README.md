@@ -49,3 +49,6 @@ Phase 1 (Auth) — Minimal Notes
 
 
 
+API Reference
+- See `docs/api.md` for the full list of endpoints available in Chapter 1.
+

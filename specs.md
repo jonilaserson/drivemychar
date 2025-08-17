@@ -64,21 +64,42 @@ For this MVP there’s **no GM live intervention during the encounter**.
 4. Assign default voice ID.  
 5. Preview & optionally regenerate/replace portrait or disable voice.  
 6. Save NPC.  
+7. System creates an initial empty encounter and sets it as the NPC's current encounter (used for sharing/entering from the list).  
 
 ### 4.3 Edit NPC
 - GM/Admin can edit any section, change portrait URL, toggle voice.  
 
-### 4.4 Launch Encounter
-1. From NPC page, GM clicks "Launch encounter".  
+### 4.4 Enter Encounter
+1. From NPC page or list, GM clicks "Enter encounter".  
 2. Backend creates encounter with random slug.  
 3. Initial patience & interest set from NPC defaults.  
 4. Share URL → full access for anyone with link.  
+5. Each NPC has a single "current encounter". Creating a new encounter replaces the current one; the list shows the current encounter slug and last message preview, and offers actions: Copy link, Enter encounter, Create new encounter, Delete NPC.  
 
 ### 4.5 Conversation Runtime
 - Viewer UI: message list, composer, voice toggle.  
 - Send message → patience−1, run LLM, check motivation, possibly reset patience to 5.  
 - Generate TTS if enabled.  
 - Persist messages and state.  
+
+### 4.6 Screens & Navigation
+- Landing `/` (unauthenticated)
+  - Shows Google sign-in button. After successful sign-in, redirects to Authed Home.
+
+- Authed Home `/` (main screen)
+  - Displays the user’s NPC list. For each NPC, shows portrait, name, id, and if present: `current_encounter_slug` and last message preview.
+  - Per‑NPC actions: Edit, Enter encounter (opens `/e/:slug`), Copy link, Create new encounter (replaces current), Delete NPC (with confirmation).
+  - Create NPC: inline toggle reveals a textarea to paste a paragraph and create a new NPC. On success, list refreshes and a current encounter is available.
+
+- NPC Editor (inline within Authed Home)
+  - When Edit is selected, the editor view replaces the list. Editable fields: name and the five sections; portrait preview with Regenerate portrait; defaults editing; Save changes; Delete NPC; Enter encounter.
+  - Back returns to the NPC list and refreshes data.
+
+- Encounter Room `/e/:slug` (public)
+  - Anyone with the link can view portrait, name, and full transcript. Composer to send a message. Server returns a mock NPC reply and updates state and transcript. Refresh reflects latest transcript.
+
+- Admin `/admin` (admin only)
+  - Minimal listings for users, NPCs, encounters, and audit log.
 
 ---
 
@@ -88,7 +109,7 @@ For this MVP there’s **no GM live intervention during the encounter**.
 - `id`, `google_sub`, `email`, `display_name`, `role`, timestamps  
 
 **npcs**  
-- `id`, `owner_id`, name, sections, image_url, voice_id, defaults, timestamps  
+- `id`, `owner_id`, name, sections, image_url, voice_id, defaults, `current_encounter_id` (nullable), timestamps  
 
 **encounters**  
 - `id`, `npc_id`, `slug`, state fields, timestamps  
@@ -99,11 +120,16 @@ For this MVP there’s **no GM live intervention during the encounter**.
 **audit_log**  
 - `id`, `actor_user_id`, `action`, `target_type`, `target_id`, timestamp  
 
+Notes:  
+- Deleting an NPC clears its `current_encounter_id` and cascades by deleting its encounters and their messages.  
+
 ---
 
 ## 6) API Endpoints
 
 **Auth**  
+- `GET /health`  
+- `GET /me`  
 - `POST /auth/google`  
 - `POST /auth/impersonate` (admin)  
 - `POST /auth/logout`  
@@ -114,13 +140,13 @@ For this MVP there’s **no GM live intervention during the encounter**.
 - `PATCH /npcs/:id`  
 - `GET /npcs`  
 - `GET /npcs/:id`  
+- `DELETE /npcs/:id`  
 
 **Encounters**  
 - `POST /npcs/:id/encounters`  
 - `GET /encounters/:slug`  
 - `GET /encounters/:slug/messages`  
 - `POST /encounters/:slug/messages`  
-- `GET /encounters/:slug/stream` (SSE)  
 
 **Admin**  
 - `GET /admin/users`  
@@ -190,11 +216,9 @@ Interest: Optional simple heuristic adjustments.
 
 ## 13) Minimal Frontend Pages
 
-- `/` — Landing & sign-in.  
-- `/npc/new` — Create NPC.  
-- `/npc/:id` — View/edit NPC.  
-- `/e/:slug` — Encounter room.  
-- `/admin` — Admin dashboard.  
+- `/` — Landing (unauth) and Authed Home (NPC list + inline create/edit) depending on session state.  
+- `/e/:slug` — Encounter room (public).  
+- `/admin` — Admin dashboard (admin only).  
 
 ---
 
@@ -225,46 +249,63 @@ Interest: Optional simple heuristic adjustments.
 ```plaintext
 drive-my-char/
 ├── backend/
-│   ├── src/
-│   │   ├── api/                # Route handlers for auth, NPC, encounter, admin APIs
-│   │   ├── db/                 # Database connection, migrations, query helpers
-│   │   ├── llm/                # LLM prompt templates & OpenAI API client
-│   │   ├── tts/                # ElevenLabs integration and audio processing
-│   │   ├── images/             # DALL·E + Cloudinary integration
-│   │   ├── models/             # Data model definitions (TypeScript interfaces)
-│   │   ├── middleware/         # Auth, logging, rate-limiting middleware
-│   │   ├── utils/              # Shared utilities and helpers
-│   │   └── index.ts            # App entrypoint (Express/Fastify bootstrap)
+│   ├── env.example
+│   ├── migrations/              # Postgres migrations (node-pg-migrate)
 │   ├── package.json
+│   ├── src/
+│   │   ├── db.ts                # Postgres connection pool + query helper
+│   │   ├── index.ts             # Express app entrypoint and routes (Chapter 1)
+│   │   ├── api/                 # TBD: split routes by domain (auth, npc, encounter, admin)
+│   │   ├── llm/                 # TBD: LLM prompts and clients (Chapter 2+)
+│   │   ├── tts/                 # TBD: TTS integration (Chapter 2+)
+│   │   ├── images/              # TBD: Image generation/upload helpers (Chapter 2+)
+│   │   ├── models/              # TBD: Data model types/interfaces
+│   │   ├── middleware/          # TBD: Auth/logging/rate-limit middlewares
+│   │   └── utils/               # TBD: Shared utilities
 │   └── tsconfig.json
 │
 ├── frontend/
-│   ├── src/
-│   │   ├── components/         # UI components (forms, lists, buttons, etc.)
-│   │   ├── pages/              # Route components for /, /npc/:id, /e/:slug, /admin
-│   │   ├── hooks/              # Custom React hooks for API calls and state
-│   │   ├── api/                # API client wrappers for backend endpoints
-│   │   ├── styles/             # CSS/SCSS or Tailwind config
-│   │   └── main.tsx            # React app entrypoint
-│   ├── vite.config.ts
+│   ├── env.example
+│   ├── index.html
 │   ├── package.json
-│   └── tsconfig.json
+│   ├── src/
+│   │   ├── api.ts               # API client wrappers (fetch with credentials)
+│   │   ├── main.tsx             # React app entrypoint
+│   │   ├── components/          # TBD: UI components (forms, lists, buttons)
+│   │   ├── pages/               # TBD: Route components for /, /npc/:id, /e/:slug, /admin
+│   │   ├── hooks/               # TBD: Custom React hooks
+│   │   └── styles/              # TBD: Styles or Tailwind config
+│   ├── tsconfig.json
+│   └── vite.config.ts
 │
-├── docker-compose.yml          # Local Postgres service definition
-├── .env.example                 # Example env vars for local dev
+├── docker-compose.yml           # Local Postgres service definition
+├── docs/
+│   └── api.md                   # Chapter 1 API reference
 ├── README.md
-└── docs/
-    └── specs.md                 # This spec document
-````
+├── roadmap.md
+├── specs.md                     # This spec document
+├── pyproject.toml               # (unused placeholder for tooling)
+└── uv.lock                      # (unused placeholder for tooling)
+```
 
 **Key File Descriptions:**
 
-* **backend/src/api/** — Each file groups REST/SSE endpoints by domain (auth, npc, encounter).
-* **backend/src/llm/** — Handles prompt assembly, OpenAI calls, and JSON response parsing.
-* **backend/src/tts/** — Encapsulates ElevenLabs API usage, audio URL generation, Cloudinary upload.
-* **backend/src/images/** — Portrait generation prompts, DALL·E calls, Cloudinary upload logic.
-* **backend/src/models/** — TypeScript types for DB rows and API payloads.
-* **frontend/src/pages/** — Each file maps to a route; imports components for layout.
-* **frontend/src/api/** — Fetch wrappers with auth cookie handling.
+- `backend/src/index.ts` — Express app entrypoint and Chapter 1 routes.
+- `backend/src/db.ts` — Postgres connection pool and `query` helper.
+- `backend/migrations/` — Database migrations.
+- `backend/src/api/` — TBD: split route handlers by domain.
+- `backend/src/llm/` — TBD: prompts and LLM client integrations.
+- `backend/src/tts/` — TBD: TTS provider integration and audio handling.
+- `backend/src/images/` — TBD: image generation/upload helpers.
+- `backend/src/models/` — TBD: data model types/interfaces.
+- `backend/src/middleware/` — TBD: auth, logging, rate-limiting.
+- `backend/src/utils/` — TBD: shared utilities.
+- `frontend/src/main.tsx` — React app entrypoint and router.
+- `frontend/src/api.ts` — Fetch wrappers with credentials and base URL logic.
+- `frontend/src/components/` — TBD: shared UI components.
+- `frontend/src/pages/` — TBD: route-level components.
+- `frontend/src/hooks/` — TBD: React hooks.
+- `frontend/src/styles/` — TBD: styles/Tailwind.
+- `docs/api.md` — Chapter 1 API reference.
 
 
