@@ -2,6 +2,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { getMe, authWithGoogle, logout } from './api';
+import './styles.css';
+import { IconPen, IconTrash } from './icons';
+import { ToastProvider, useToast } from './toast';
+import { Tooltip } from './tooltip';
 
 declare global {
   interface Window {
@@ -46,6 +50,30 @@ function App() {
   const [gisReady, setGisReady] = React.useState(false);
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
+  // Ensure a visible glow layer via inline styles to bypass CSS ordering issues
+  React.useEffect(() => {
+    const id = 'inline-glow-layer';
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      Object.assign(el.style, {
+        position: 'fixed',
+        inset: '0px',
+        pointerEvents: 'none',
+        zIndex: '0',
+        background:
+          'radial-gradient(1000px 700px at 15% -10%, rgba(245, 158, 11, 0.55), transparent 58%), ' +
+          'radial-gradient(900px 600px at 110% -12%, rgba(253, 186, 116, 0.30), transparent 58%), ' +
+          'radial-gradient(800px 600px at 50% 110%, rgba(255, 255, 255, 0.10), transparent 72%)',
+      } as CSSStyleDeclaration);
+      document.body.prepend(el);
+    }
+    return () => {
+      // keep layer; do not remove on unmount
+    };
+  }, []);
+
   useScript('https://accounts.google.com/gsi/client', () => setGisReady(true));
 
   React.useEffect(() => {
@@ -77,10 +105,11 @@ function App() {
   }, [clientId, gisReady]);
 
   return (
-    <BrowserRouter>
-      <div style={{ fontFamily: 'system-ui, sans-serif', padding: 24 }}>
-        <h1>Drive My Char — Frontend</h1>
-        <Routes>
+    <ToastProvider>
+      <BrowserRouter>
+        <div className="app-shell">
+          <h1 style={{ fontFamily: 'var(--font-display)' }}>Drive My Char — Frontend</h1>
+          <Routes>
           <Route
             path="/"
             element={
@@ -93,9 +122,10 @@ function App() {
           />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/e/:slug" element={<EncounterRoom />} />
-        </Routes>
-      </div>
-    </BrowserRouter>
+          </Routes>
+        </div>
+      </BrowserRouter>
+    </ToastProvider>
   );
 }
 
@@ -223,7 +253,7 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
           <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, padding: 0 }}>Your NPCs</h2>
             {!showCreate ? (
-              <button onClick={() => setShowCreate(true)}>Create NPC</button>
+              <button className="btn-primary" style={{ transform: 'translateY(-4px)' }} onClick={() => setShowCreate(true)}>+ Create New</button>
             ) : (
               <button onClick={() => setShowCreate(false)}>Back to list</button>
             )}
@@ -231,33 +261,34 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
           {!showCreate && (
             <div style={{ display: 'grid', gap: 12 }}>
               {npcs.map((n) => (
-                <div
-                  key={n.id}
-                  style={{ border: '1px solid #ddd', padding: 12, borderRadius: 8, background: '#fff' }}
-                >
+                <div key={n.id} className="surface" style={{ padding: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     {n.image_url && (
                       <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
                     )}
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600 }}>{n.name}</div>
-                      <div style={{ fontSize: 12, color: '#555' }}>id: {n.id}</div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>{n.name}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>id: {n.id}</div>
                       {n.current_encounter_slug && (
                         <div style={{ marginTop: 4 }}>
-                          <span style={{ fontSize: 12, color: '#555' }}>Current: {n.current_encounter_slug}</span>
+                          <span className="muted" style={{ fontSize: 12 }}>Current: {n.current_encounter_slug}</span>
                           <CopyLinkButton link={`${getShareBaseUrl()}/e/${n.current_encounter_slug}`} />
                           {n.current_encounter_last_message && (
-                            <div style={{ fontSize: 12, color: '#333', marginTop: 4 }}>
-                              Last: {n.current_encounter_last_message}
+                            <div className="line-clamp-2" style={{ fontSize: 12, marginTop: 4 }}>
+                              <span className="muted">Last:</span> {n.current_encounter_last_message}
                             </div>
                           )}
                         </div>
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button onClick={() => setSelectedNpcId(n.id)}>Edit</button>
+                      <Tooltip label="Edit">
+                        <button className="btn-primary btn-icon" onClick={() => setSelectedNpcId(n.id)} aria-label="Edit NPC">
+                          <IconPen />
+                        </button>
+                      </Tooltip>
                       {n.current_encounter_slug && (
-                        <button onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Enter encounter</button>
+                        <button className="btn-primary" onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Enter encounter</button>
                       )}
                       <CreateNewEncounterButton onCreated={async () => { await loadNpcs(); }} npcId={n.id} />
                       <DeleteNpcButton npcId={n.id} onDeleted={async () => { await loadNpcs(); }} />
@@ -280,7 +311,7 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
                 style={{ width: '100%', maxWidth: 600 }}
               />
               <div>
-                <button disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
+                <button className="btn-primary" disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
                   {creating ? 'Creating...' : 'Create'}
                 </button>
               </div>
@@ -406,7 +437,7 @@ function NpcEditor({ npcId, onBack }: { npcId: number; onBack: () => void }) {
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save changes'}</button>
+        <button className="btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save changes'}</button>
         <LaunchEncounterButton npcId={npcId} onCreated={(slug) => {
           window.open(`/e/${slug}`, '_blank');
         }} />
@@ -455,7 +486,7 @@ function LaunchEncounterButton({ npcId, onCreated }: { npcId: number; onCreated:
   }
   return (
     <span>
-      <button style={{ marginLeft: 8 }} disabled={creating} onClick={launch}>
+      <button className="btn-primary" style={{ marginLeft: 8 }} disabled={creating} onClick={launch}>
         {creating ? 'Entering...' : 'Enter encounter'}
       </button>
       {copied && <span style={{ marginLeft: 8, color: '#0a0' }}>Link copied</span>}
@@ -478,26 +509,30 @@ function CreateNewEncounterButton({ npcId, onCreated }: { npcId: number; onCreat
     }
   }
   return (
-    <button disabled={creating} onClick={createNew}>{creating ? 'Creating...' : 'Create new encounter'}</button>
+    <button className="btn-primary" disabled={creating} onClick={createNew}>{creating ? 'Creating...' : 'Create new encounter'}</button>
   );
 }
 
 function CopyLinkButton({ link }: { link: string }) {
   const [copied, setCopied] = React.useState(false);
+  const toast = useToast();
   async function copy() {
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
+      const el = document.activeElement as HTMLElement | null;
+      if (el) toast.showNear('Link copied', el); else toast.show('Link copied');
     } catch {
       // ignore
     }
   }
   return (
-    <span style={{ marginLeft: 8 }}>
-      <button onClick={copy} style={{ fontSize: 12 }}>Copy link</button>
-      {copied && <span style={{ marginLeft: 6, color: '#0a0', fontSize: 12 }}>Copied</span>}
-    </span>
+    <Tooltip label="Copy link">
+      <button className="btn-secondary btn-icon" onClick={copy} aria-label="Copy link" style={{ marginLeft: 8 }}>
+        <img src="/icons/link-alt.svg" alt="link" style={{ width: 16, height: 16 }} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -509,13 +544,19 @@ function DeleteNpcButton({ npcId, onDeleted }: { npcId: number; onDeleted: () =>
     setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/npcs/${npcId}`, { method: 'DELETE', credentials: 'include' });
-      if (res.ok) onDeleted();
+      if (res.ok) {
+        onDeleted();
+        // Simple collapse feedback: show a toast
+        try { (window as any).__toast && (window as any).__toast('NPC deleted'); } catch {}
+      }
     } finally {
       setBusy(false);
     }
   }
   return (
-    <button disabled={busy} onClick={removeNpc} style={{ color: '#a00' }}>{busy ? 'Deleting...' : 'Delete'}</button>
+    <button className="btn-danger btn-icon" disabled={busy} onClick={removeNpc} aria-label={busy ? 'Deleting NPC…' : 'Delete NPC'} title={busy ? 'Deleting…' : 'Delete'}>
+      <IconTrash />
+    </button>
   );
 }
 
@@ -638,7 +679,7 @@ function EncounterHeader({ enc }: { enc: any }) {
           <div style={{ fontSize: 12, color: '#555' }}>State: patience={enc.state_json?.patience} interest={enc.state_json?.interest}</div>
         </div>
         <div style={{ marginLeft: 'auto' }}>
-          <button onClick={copy}>Copy link</button>
+          <button className="btn-secondary" onClick={copy}>Copy link</button>
           {copied && <span style={{ marginLeft: 8, color: '#0a0' }}>Copied</span>}
         </div>
       </div>
