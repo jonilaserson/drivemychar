@@ -12,6 +12,27 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan('dev'));
+async function tryDb(): Promise<boolean> {
+  try {
+    await query('select 1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function audit(actorUserId: number | null, action: string, targetType: string, targetId: number | null) {
+  try {
+    await query('insert into audit_log (actor_user_id, action, target_type, target_id) values ($1,$2,$3,$4)', [
+      actorUserId,
+      action,
+      targetType,
+      targetId,
+    ]);
+  } catch {
+    // ignore audit failures
+  }
+}
 
 // Sessions
 const sessionSecret = process.env.SESSION_SECRET || 'devsecret_change_me';
@@ -73,8 +94,9 @@ app.use(async (req, _res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true });
+app.get('/health', async (_req, res) => {
+  const dbOk = await tryDb();
+  res.json({ ok: true, dbOk });
 });
 
 app.get('/me', (req, res) => {
@@ -111,6 +133,8 @@ app.post('/auth/google', async (req, res) => {
     };
     (req.session as any).user = user;
     res.json({ user });
+    // audit sign-in
+    await audit(user.id, 'auth.google', 'user', user.id);
   } catch (e) {
     res.status(401).json({ error: 'invalid token' });
   }
@@ -231,6 +255,7 @@ app.post('/npcs', requireAuth, async (req, res) => {
     [npc.id, slug, JSON.stringify(defaults)],
   );
   await query('update npcs set current_encounter_id = $1 where id = $2', [encRows[0].id, npc.id]);
+  await audit(req.user!.id, 'npc.create', 'npc', npc.id);
   res.status(201).json({ npc: { ...npc, current_encounter_slug: encRows[0].slug } });
 });
 
@@ -267,6 +292,7 @@ app.patch('/npcs/:id', requireAuth, async (req, res) => {
   params.push(id);
   const sql = `update npcs set ${fields.join(', ')}, updated_at = now() where id = $${p} returning id, owner_id, name, sections_json, image_url, voice_id, defaults_json, created_at, updated_at`;
   const { rows } = await query(sql, params);
+  await audit(req.user!.id, 'npc.update', 'npc', id);
   res.json({ npc: rows[0] });
 });
 
@@ -282,6 +308,7 @@ app.post('/npcs/:id/regen-image', requireAuth, async (req, res) => {
     'update npcs set image_url = $1, updated_at = now() where id = $2 returning id, owner_id, name, sections_json, image_url, voice_id, defaults_json, created_at, updated_at',
     [seedUrl, id],
   );
+  await audit(req.user!.id, 'npc.regen_image', 'npc', id);
   res.json({ npc: rows[0] });
 });
 
@@ -313,6 +340,7 @@ app.post('/npcs/:id/encounters', requireAuth, async (req, res) => {
       );
       const enc = rows[0];
       await query('update npcs set current_encounter_id = $1 where id = $2', [enc.id, npcId]);
+      await audit(req.user!.id, 'encounter.create', 'encounter', enc.id);
       return res.status(201).json({ encounter: enc });
     } catch (e: any) {
       // retry on slug conflict
@@ -377,6 +405,7 @@ app.post('/encounters/:slug/messages', async (req, res) => {
     'insert into encounter_messages (encounter_id, author_type, text) values ($1, $2, $3) returning id, author_type, text, created_at',
     [enc.id, 'user', text],
   );
+  await audit(null, 'encounter.message', 'encounter', enc.id);
 
   // update patience after user message
   let newState = applyPatienceOnUserMessage(enc.state_json);
@@ -398,6 +427,38 @@ app.post('/encounters/:slug/messages', async (req, res) => {
   ]);
 
   res.status(201).json({ userMessage: userMsgRows[0], npcMessage: npcMsgRows[0], state: newState });
+});
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+  next();
+}
+
+// --- Admin ---
+app.get('/admin/users', requireAdmin, async (_req, res) => {
+  const { rows } = await query(
+    'select id, email, display_name, role, created_at, updated_at from users order by id desc limit 200',
+  );
+  res.json({ users: rows });
+});
+
+app.get('/admin/npcs', requireAdmin, async (_req, res) => {
+  const { rows } = await query(
+    'select id, owner_id, name, current_encounter_id, updated_at from npcs order by updated_at desc limit 200',
+  );
+  res.json({ npcs: rows });
+});
+
+app.get('/admin/encounters', requireAdmin, async (_req, res) => {
+  const { rows } = await query('select id, npc_id, slug, updated_at from encounters order by id desc limit 200');
+  res.json({ encounters: rows });
+});
+
+app.get('/admin/audit', requireAdmin, async (_req, res) => {
+  const { rows } = await query(
+    'select id, actor_user_id, action, target_type, target_id, created_at from audit_log order by id desc limit 200',
+  );
+  res.json({ audit: rows });
 });
 
 const port = Number(process.env.PORT || 4000);

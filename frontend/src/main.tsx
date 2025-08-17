@@ -91,6 +91,7 @@ function App() {
               )
             }
           />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/e/:slug" element={<EncounterRoom />} />
         </Routes>
       </div>
@@ -108,6 +109,60 @@ function Landing({ clientId }: { clientId?: string }) {
         </p>
       )}
       <div id="gsi-btn" />
+    </div>
+  );
+}
+
+function AdminPage() {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const [users, setUsers] = React.useState<any[]>([]);
+  const [npcs, setNpcs] = React.useState<any[]>([]);
+  const [encs, setEncs] = React.useState<any[]>([]);
+  const [audit, setAudit] = React.useState<any[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const [u, n, e, a] = await Promise.all([
+          fetch(`${API_BASE}/admin/users`, { credentials: 'include' }),
+          fetch(`${API_BASE}/admin/npcs`, { credentials: 'include' }),
+          fetch(`${API_BASE}/admin/encounters`, { credentials: 'include' }),
+          fetch(`${API_BASE}/admin/audit`, { credentials: 'include' }),
+        ]);
+        if (!u.ok || !n.ok || !e.ok || !a.ok) throw new Error('forbidden or server error');
+        setUsers((await u.json()).users);
+        setNpcs((await n.json()).npcs);
+        setEncs((await e.json()).encounters);
+        setAudit((await a.json()).audit);
+      } catch (err: any) {
+        setError(err.message || 'failed to load');
+      }
+    })();
+  }, [API_BASE]);
+
+  if (error) return <div style={{ color: 'crimson' }}>Admin error: {error}</div>;
+  return (
+    <div>
+      <h2>Admin</h2>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <section>
+          <h3>Users</h3>
+          <div style={{ fontSize: 12, color: '#555' }}>{users.length} users</div>
+        </section>
+        <section>
+          <h3>NPCs</h3>
+          <div style={{ fontSize: 12, color: '#555' }}>{npcs.length} npcs</div>
+        </section>
+        <section>
+          <h3>Encounters</h3>
+          <div style={{ fontSize: 12, color: '#555' }}>{encs.length} encounters</div>
+        </section>
+        <section>
+          <h3>Audit</h3>
+          <div style={{ fontSize: 12, color: '#555' }}>{audit.length} events</div>
+        </section>
+      </div>
     </div>
   );
 }
