@@ -23,6 +23,15 @@ Notes
 - Default Postgres credentials: user dmc / password dmc / db dmc
 - Adjust ports or envs as needed
 
+LAN sharing (open encounter links on phone)
+- Backend must be reachable on LAN: visit http://<LAN_IP>:4000/health from phone
+- Frontend env (restart after editing):
+  - VITE_API_BASE_URL=http://localhost:4000 (laptop workflow; encounter room auto-rewrites for viewers)
+  - Optional: VITE_PUBLIC_BASE_URL=http://<LAN_IP>:5173 or http://<sslip_host>:5173 (copied links)
+  - Optional: VITE_LAN_HOST=<LAN_IP or sslip host>
+- Frontend server config (`frontend/vite.config.ts`) binds to LAN and allows hosts (already set)
+- Sign-in flows must use http://localhost:5173 on laptop (Google blocks raw IP origins). Encounter room `/e/:slug` is public and works from LAN IP.
+
 
 Phase 1 (Auth) — Minimal Notes
 

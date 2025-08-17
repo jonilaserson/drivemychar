@@ -1,11 +1,23 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { getMe, authWithGoogle, logout } from './api';
 
 declare global {
   interface Window {
     google?: any;
   }
+}
+
+function getShareBaseUrl(): string {
+  const explicit = (import.meta.env as any).VITE_PUBLIC_BASE_URL as string | undefined;
+  if (explicit) return explicit.replace(/\/$/, '');
+  const { protocol, hostname, port } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    const lan = (import.meta.env as any).VITE_LAN_HOST as string | undefined; // e.g. 10.100.102.15 or 10-100-...sslip.io
+    if (lan) return `${protocol}//${lan}${port ? `:${port}` : ''}`;
+  }
+  return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
 }
 
 function useScript(src: string, onload?: () => void) {
@@ -65,29 +77,47 @@ function App() {
   }, [clientId, gisReady]);
 
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: 24 }}>
-      <h1>Drive My Char — Frontend</h1>
-      {!user ? (
-        <div>
-          <p>Sign in with Google to continue.</p>
-          {!clientId && (
-            <p style={{ color: 'crimson' }}>
-              Missing VITE_GOOGLE_CLIENT_ID in frontend/.env. Set it and restart the dev server.
-            </p>
-          )}
-          <div id="gsi-btn" />
-        </div>
-      ) : (
-        <AuthedHome user={user} onSignOut={async () => { await logout(); setUser(null); }} />
+    <BrowserRouter>
+      <div style={{ fontFamily: 'system-ui, sans-serif', padding: 24 }}>
+        <h1>Drive My Char — Frontend</h1>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              user ? (
+                <AuthedHome user={user} onSignOut={async () => { await logout(); setUser(null); }} />
+              ) : (
+                <Landing clientId={clientId} />
+              )
+            }
+          />
+          <Route path="/e/:slug" element={<EncounterRoom />} />
+        </Routes>
+      </div>
+    </BrowserRouter>
+  );
+}
+
+function Landing({ clientId }: { clientId?: string }) {
+  return (
+    <div>
+      <p>Sign in with Google to continue.</p>
+      {!clientId && (
+        <p style={{ color: 'crimson' }}>
+          Missing VITE_GOOGLE_CLIENT_ID in frontend/.env. Set it and restart the dev server.
+        </p>
       )}
+      <div id="gsi-btn" />
     </div>
   );
 }
 
 function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
+  const navigate = useNavigate();
   const [npcs, setNpcs] = React.useState<any[]>([]);
   const [creating, setCreating] = React.useState(false);
   const [paragraph, setParagraph] = React.useState('');
+  const [showCreate, setShowCreate] = React.useState(false);
   const [selectedNpcId, setSelectedNpcId] = React.useState<number | null>(null);
   const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
@@ -113,6 +143,7 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
       if (res.ok) {
         setParagraph('');
         await loadNpcs();
+        setShowCreate(false);
       }
     } finally {
       setCreating(false);
@@ -134,41 +165,72 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
         />
       ) : (
         <>
-          <h2 style={{ marginTop: 24 }}>Your NPCs</h2>
-          <div style={{ display: 'grid', gap: 12 }}>
-            {npcs.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => setSelectedNpcId(n.id)}
-                style={{ textAlign: 'left', border: '1px solid #ddd', padding: 12, borderRadius: 8, background: '#fff', cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  {n.image_url && (
-                    <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
-                  )}
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{n.name}</div>
-                    <div style={{ fontSize: 12, color: '#555' }}>id: {n.id}</div>
+          <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h2 style={{ margin: 0, padding: 0 }}>Your NPCs</h2>
+            {!showCreate ? (
+              <button onClick={() => setShowCreate(true)}>Create NPC</button>
+            ) : (
+              <button onClick={() => setShowCreate(false)}>Back to list</button>
+            )}
+          </div>
+          {!showCreate && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {npcs.map((n) => (
+                <div
+                  key={n.id}
+                  style={{ border: '1px solid #ddd', padding: 12, borderRadius: 8, background: '#fff' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {n.image_url && (
+                      <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600 }}>{n.name}</div>
+                      <div style={{ fontSize: 12, color: '#555' }}>id: {n.id}</div>
+                      {n.current_encounter_slug && (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ fontSize: 12, color: '#555' }}>Current: {n.current_encounter_slug}</span>
+                          <CopyLinkButton link={`${getShareBaseUrl()}/e/${n.current_encounter_slug}`} />
+                          {n.current_encounter_last_message && (
+                            <div style={{ fontSize: 12, color: '#333', marginTop: 4 }}>
+                              Last: {n.current_encounter_last_message}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => setSelectedNpcId(n.id)}>Edit</button>
+                      {n.current_encounter_slug && (
+                        <button onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Launch encounter</button>
+                      )}
+                      <CreateNewEncounterButton onCreated={async () => { await loadNpcs(); }} npcId={n.id} />
+                    </div>
                   </div>
                 </div>
-              </button>
-            ))}
-            {npcs.length === 0 && <div>No NPCs yet.</div>}
-          </div>
+              ))}
+              {npcs.length === 0 && <div>No NPCs yet.</div>}
+            </div>
+          )}
 
-          <h3 style={{ marginTop: 24 }}>Create NPC</h3>
-          <textarea
-            placeholder="Paste a short paragraph describing your NPC"
-            value={paragraph}
-            onChange={(e) => setParagraph(e.target.value)}
-            rows={4}
-            style={{ width: '100%', maxWidth: 600 }}
-          />
-          <div>
-            <button disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
-              {creating ? 'Creating...' : 'Create'}
-            </button>
-          </div>
+          {showCreate && (
+            <>
+              <h3 style={{ marginTop: 24 }}>Create NPC</h3>
+              <textarea
+                placeholder="Paste a short paragraph describing your NPC"
+                value={paragraph}
+                onChange={(e) => setParagraph(e.target.value)}
+                rows={4}
+                style={{ width: '100%', maxWidth: 600 }}
+              />
+              <div>
+                <button disabled={creating || paragraph.trim().length < 5} onClick={createNpc}>
+                  {creating ? 'Creating...' : 'Create'}
+                </button>
+                <button style={{ marginLeft: 8 }} onClick={() => setShowCreate(false)}>Back to list</button>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -290,6 +352,9 @@ function NpcEditor({ npcId, onBack }: { npcId: number; onBack: () => void }) {
 
       <div style={{ marginTop: 16 }}>
         <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save changes'}</button>
+        <LaunchEncounterButton npcId={npcId} onCreated={(slug) => {
+          window.open(`/e/${slug}`, '_blank');
+        }} />
       </div>
     </div>
   );
@@ -301,6 +366,205 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
       <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} style={{ width: '100%' }} />
     </label>
+  );
+}
+
+function LaunchEncounterButton({ npcId, onCreated }: { npcId: number; onCreated: (slug: string) => void }) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const [creating, setCreating] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  // reuse global helper
+  async function copyLinkToClipboard(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+  async function launch() {
+    setCreating(true);
+    try {
+      const res = await fetch(`${API_BASE}/npcs/${npcId}/encounters`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to create encounter');
+      const data = await res.json();
+      const slug = data.encounter.slug;
+      const link = `${getShareBaseUrl()}/e/${slug}`;
+      await copyLinkToClipboard(link);
+      onCreated(slug);
+    } finally {
+      setCreating(false);
+    }
+  }
+  return (
+    <span>
+      <button style={{ marginLeft: 8 }} disabled={creating} onClick={launch}>
+        {creating ? 'Launching...' : 'Launch encounter'}
+      </button>
+      {copied && <span style={{ marginLeft: 8, color: '#0a0' }}>Link copied</span>}
+    </span>
+  );
+}
+
+function CreateNewEncounterButton({ npcId, onCreated }: { npcId: number; onCreated: () => void }) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const [creating, setCreating] = React.useState(false);
+  async function createNew() {
+    setCreating(true);
+    try {
+      const res = await fetch(`${API_BASE}/npcs/${npcId}/encounters`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to create encounter');
+      await res.json();
+      onCreated();
+    } finally {
+      setCreating(false);
+    }
+  }
+  return (
+    <button disabled={creating} onClick={createNew}>{creating ? 'Creating...' : 'Create new encounter'}</button>
+  );
+}
+
+function CopyLinkButton({ link }: { link: string }) {
+  const [copied, setCopied] = React.useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <span style={{ marginLeft: 8 }}>
+      <button onClick={copy} style={{ fontSize: 12 }}>Copy link</button>
+      {copied && <span style={{ marginLeft: 6, color: '#0a0', fontSize: 12 }}>Copied</span>}
+    </span>
+  );
+}
+
+function resolveEncounterApiBase(preferredBase: string): string {
+  try {
+    const u = new URL(preferredBase);
+    const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    if (isLocal) {
+      // Use the viewer's host so phones don't hit localhost
+      const { protocol, hostname } = window.location;
+      return `${protocol}//${hostname}:4000`;
+    }
+    return preferredBase;
+  } catch {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:4000`;
+  }
+}
+
+function EncounterRoom() {
+  const CONFIG_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+  const API_BASE = resolveEncounterApiBase(CONFIG_API_BASE);
+  const { slug } = useParams();
+  const [enc, setEnc] = React.useState<any | null>(null);
+  const [messages, setMessages] = React.useState<any[]>([]);
+  const [text, setText] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const eUrl = `${API_BASE}/encounters/${slug}`;
+        const eRes = await fetch(eUrl);
+        if (eRes.ok) {
+          const data = await eRes.json();
+          setEnc(data.encounter);
+        } else {
+          setError(`Failed to load encounter (${eRes.status}). URL: ${eUrl}`);
+        }
+        const mUrl = `${API_BASE}/encounters/${slug}/messages`;
+        const mRes = await fetch(mUrl);
+        if (mRes.ok) {
+          const data = await mRes.json();
+          setMessages(data.messages);
+        } else {
+          setError(`Failed to load messages (${mRes.status}). URL: ${mUrl}`);
+        }
+      } catch (e: any) {
+        setError(`Network error. API_BASE=${API_BASE}`);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [API_BASE, slug]);
+
+  async function send() {
+    const t = text.trim();
+    if (!t) return;
+    setText('');
+    const res = await fetch(`${API_BASE}/encounters/${slug}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: t }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setMessages((prev) => [...prev, data.userMessage, data.npcMessage]);
+      setEnc((prev: any) => ({ ...(prev || {}), state_json: data.state }));
+    }
+  }
+
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div style={{ color: 'crimson' }}>Error: {error}</div>;
+  if (!enc) return <div>Not found</div>;
+
+  return (
+    <div>
+      <h2>Encounter</h2>
+      <EncounterHeader enc={enc} />
+      <div style={{ marginTop: 16 }}>
+        {messages.map((m, i) => (
+          <div key={i} style={{ marginBottom: 8 }}>
+            <b>{m.author_type === 'user' ? 'You' : 'NPC'}:</b> {m.text}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <input value={text} onChange={(e) => setText(e.target.value)} style={{ width: 400 }} />
+        <button onClick={send} style={{ marginLeft: 8 }}>Send</button>
+      </div>
+    </div>
+  );
+}
+
+function EncounterHeader({ enc }: { enc: any }) {
+  const [copied, setCopied] = React.useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+        {enc.npc_image_url && (
+          <img src={enc.npc_image_url} alt={enc.npc_name} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8 }} />
+        )}
+        <div>
+          <div style={{ fontWeight: 600 }}>{enc.npc_name}</div>
+          <div style={{ fontSize: 12, color: '#555' }}>Slug: {enc.slug}</div>
+          <div style={{ fontSize: 12, color: '#555' }}>State: patience={enc.state_json?.patience} interest={enc.state_json?.interest}</div>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <button onClick={copy}>Copy link</button>
+          {copied && <span style={{ marginLeft: 8, color: '#0a0' }}>Copied</span>}
+        </div>
+      </div>
   );
 }
 

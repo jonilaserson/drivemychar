@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import cookieSession from 'cookie-session';
 import { OAuth2Client } from 'google-auth-library';
 import { query } from './db';
+import crypto from 'crypto';
 
 const app = express();
 
@@ -173,7 +174,18 @@ function pickSeedImageUrl(): string | null {
 
 app.get('/npcs', requireAuth, async (req, res) => {
   const { rows } = await query(
-    'select id, owner_id, name, sections_json, image_url, voice_id, defaults_json, created_at, updated_at from npcs where owner_id = $1 order by updated_at desc',
+    `select n.id, n.owner_id, n.name, n.sections_json, n.image_url, n.voice_id, n.defaults_json,
+            n.created_at, n.updated_at,
+            e.slug as current_encounter_slug,
+            (
+              select em.text from encounter_messages em
+               where em.encounter_id = n.current_encounter_id
+               order by em.id desc limit 1
+            ) as current_encounter_last_message
+       from npcs n
+  left join encounters e on e.id = n.current_encounter_id
+      where n.owner_id = $1
+   order by n.updated_at desc`,
     [req.user!.id],
   );
   res.json({ npcs: rows });
@@ -211,7 +223,15 @@ app.post('/npcs', requireAuth, async (req, res) => {
     null,
     JSON.stringify(defaults),
   ]);
-  res.status(201).json({ npc: rows[0] });
+  const npc = rows[0];
+  // create initial empty encounter and set as current
+  const slug = generateSlug();
+  const { rows: encRows } = await query(
+    'insert into encounters (npc_id, slug, state_json) values ($1, $2, $3::jsonb) returning id, slug',
+    [npc.id, slug, JSON.stringify(defaults)],
+  );
+  await query('update npcs set current_encounter_id = $1 where id = $2', [encRows[0].id, npc.id]);
+  res.status(201).json({ npc: { ...npc, current_encounter_slug: encRows[0].slug } });
 });
 
 app.patch('/npcs/:id', requireAuth, async (req, res) => {
@@ -263,6 +283,121 @@ app.post('/npcs/:id/regen-image', requireAuth, async (req, res) => {
     [seedUrl, id],
   );
   res.json({ npc: rows[0] });
+});
+
+// --- Encounters --- (public access via slug)
+function generateSlug(): string {
+  return crypto.randomBytes(6).toString('base64url');
+}
+
+app.post('/npcs/:id/encounters', requireAuth, async (req, res) => {
+  const npcId = Number(req.params.id);
+  if (!Number.isFinite(npcId)) return res.status(400).json({ error: 'bad npc id' });
+  // ownership check
+  const { rows: npcRows } = await query('select id, owner_id, defaults_json from npcs where id = $1', [
+    npcId,
+  ]);
+  const npc = npcRows[0];
+  if (!npc) return res.status(404).json({ error: 'not found' });
+  if (npc.owner_id !== req.user!.id && req.user!.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+
+  // initial state from npc defaults
+  const defaults = npc.defaults_json || { patience: 5, interest: 5 };
+  let slug = '';
+  for (let i = 0; i < 5; i++) {
+    slug = generateSlug();
+    try {
+      const { rows } = await query(
+        'insert into encounters (npc_id, slug, state_json) values ($1, $2, $3::jsonb) returning id, slug',
+        [npcId, slug, JSON.stringify(defaults)],
+      );
+      const enc = rows[0];
+      await query('update npcs set current_encounter_id = $1 where id = $2', [enc.id, npcId]);
+      return res.status(201).json({ encounter: enc });
+    } catch (e: any) {
+      // retry on slug conflict
+      if (!String(e.message || '').includes('duplicate key')) throw e;
+    }
+  }
+  res.status(500).json({ error: 'failed to create encounter' });
+});
+
+app.get('/encounters/:slug', async (req, res) => {
+  const slug = String(req.params.slug);
+  const { rows } = await query(
+    `select e.id, e.slug, e.state_json, e.created_at, e.updated_at,
+            n.id as npc_id, n.name as npc_name, n.image_url as npc_image_url
+       from encounters e join npcs n on n.id = e.npc_id
+      where e.slug = $1`,
+    [slug],
+  );
+  const enc = rows[0];
+  if (!enc) return res.status(404).json({ error: 'not found' });
+  res.json({ encounter: enc });
+});
+
+app.get('/encounters/:slug/messages', async (req, res) => {
+  const slug = String(req.params.slug);
+  const { rows: encRows } = await query('select id from encounters where slug = $1', [slug]);
+  const enc = encRows[0];
+  if (!enc) return res.status(404).json({ error: 'not found' });
+  const { rows } = await query(
+    'select id, author_type, text, audio_url, model_meta_json, flags_json, created_at from encounter_messages where encounter_id = $1 order by id asc',
+    [enc.id],
+  );
+  res.json({ messages: rows });
+});
+
+function applyPatienceOnUserMessage(state: any): any {
+  const patience = Math.max(0, Number(state?.patience ?? 5) - 1);
+  return { ...(state || {}), patience };
+}
+
+function mockNpcReply(userText: string): { reply: string; motivationTriggered: boolean } {
+  const templates = [
+    (t: string) => `Hmm... ${t}? Interesting.`,
+    (t: string) => `I see. About "${t}", here's what I think...`,
+    (t: string) => `Let me consider that: ${t}`,
+  ];
+  const fn = templates[Math.floor(Math.random() * templates.length)];
+  const motivationTriggered = Math.random() < 0.2;
+  return { reply: fn(userText), motivationTriggered };
+}
+
+app.post('/encounters/:slug/messages', async (req, res) => {
+  const slug = String(req.params.slug);
+  const { text } = req.body as { text?: string };
+  if (!text || text.trim().length === 0) return res.status(400).json({ error: 'empty text' });
+  const { rows: encRows } = await query('select id, state_json from encounters where slug = $1', [slug]);
+  const enc = encRows[0];
+  if (!enc) return res.status(404).json({ error: 'not found' });
+
+  // persist user message
+  const { rows: userMsgRows } = await query(
+    'insert into encounter_messages (encounter_id, author_type, text) values ($1, $2, $3) returning id, author_type, text, created_at',
+    [enc.id, 'user', text],
+  );
+
+  // update patience after user message
+  let newState = applyPatienceOnUserMessage(enc.state_json);
+
+  // mock npc reply
+  const mock = mockNpcReply(text);
+  if (mock.motivationTriggered) newState = { ...(newState || {}), patience: 5 };
+
+  // save npc message
+  const { rows: npcMsgRows } = await query(
+    'insert into encounter_messages (encounter_id, author_type, text, model_meta_json) values ($1, $2, $3, $4::jsonb) returning id, author_type, text, created_at',
+    [enc.id, 'npc', mock.reply, JSON.stringify({ motivationTriggered: mock.motivationTriggered })],
+  );
+
+  // persist new state
+  await query('update encounters set state_json = $1::jsonb, updated_at = now() where id = $2', [
+    JSON.stringify(newState),
+    enc.id,
+  ]);
+
+  res.status(201).json({ userMessage: userMsgRows[0], npcMessage: npcMsgRows[0], state: newState });
 });
 
 const port = Number(process.env.PORT || 4000);
