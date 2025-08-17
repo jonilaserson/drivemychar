@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { getMe, authWithGoogle, logout } from './api';
 import './styles.css';
-import { IconPen, IconTrash } from './icons';
+import { IconPen, IconTrash, IconShare } from './icons';
 import { ToastProvider, useToast } from './toast';
 import { Tooltip } from './tooltip';
 
@@ -126,6 +126,37 @@ function App() {
         </div>
       </BrowserRouter>
     </ToastProvider>
+  );
+}
+
+function NpcPeekingPanel({ lastMessage, url }: { lastMessage: string; url: string }) {
+  const toast = useToast();
+  async function share() {
+    try {
+      if (navigator.share) {
+        await navigator.share({ url, title: 'Encounter link' });
+      } else {
+        await navigator.clipboard.writeText(url);
+        const el = document.activeElement as HTMLElement | null;
+        if (el) toast.showNear('Link copied', el); else toast.show('Link copied');
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, fontSize: 12 }} className="line-clamp-2">
+        <span className="muted">Last:</span> {lastMessage || '—'}
+      </div>
+      <button className="btn-primary" onClick={() => window.open(url, '_blank')}>Enter encounter</button>
+      <CopyLinkButton link={url} />
+      <Tooltip label="Share">
+        <button className="btn-secondary btn-icon" onClick={share} aria-label="Share link">
+          <img src="/icons/share.svg" alt="share" style={{ width: 16, height: 16 }} />
+        </button>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -260,42 +291,44 @@ function AuthedHome({ user, onSignOut }: { user: any; onSignOut: () => void }) {
           </div>
           {!showCreate && (
             <div style={{ display: 'grid', gap: 12 }}>
-              {npcs.map((n) => (
-                <div key={n.id} className="surface" style={{ padding: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {n.image_url && (
-                      <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
-                    )}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>{n.name}</div>
-                      <div className="muted" style={{ fontSize: 12 }}>id: {n.id}</div>
-                      {n.current_encounter_slug && (
-                        <div style={{ marginTop: 4 }}>
-                          <span className="muted" style={{ fontSize: 12 }}>Current: {n.current_encounter_slug}</span>
-                          <CopyLinkButton link={`${getShareBaseUrl()}/e/${n.current_encounter_slug}`} />
-                          {n.current_encounter_last_message && (
+              {npcs.map((n) => {
+                const personality: string = (n.sections_json && (n.sections_json.personality || '')) || '';
+                const hasCurrent = Boolean(n.current_encounter_slug);
+                const shareUrl = hasCurrent ? `${getShareBaseUrl()}/e/${n.current_encounter_slug}` : '';
+                return (
+                  <div key={n.id} className="npc-peek-wrapper">
+                    <div className="surface npc-card" style={{ padding: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {n.image_url && (
+                          <img src={n.image_url} alt={n.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8 }} />
+                        )}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>{n.name}</div>
+                          {personality && (
                             <div className="line-clamp-2" style={{ fontSize: 12, marginTop: 4 }}>
-                              <span className="muted">Last:</span> {n.current_encounter_last_message}
+                              <span className="muted">Personality:</span> {personality}
                             </div>
                           )}
                         </div>
-                      )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <Tooltip label="Edit">
+                            <button className="btn-primary btn-icon" onClick={() => setSelectedNpcId(n.id)} aria-label="Edit NPC">
+                              <IconPen />
+                            </button>
+                          </Tooltip>
+                          <CreateNewEncounterButton onCreated={async () => { await loadNpcs(); }} npcId={n.id} />
+                          <DeleteNpcButton npcId={n.id} onDeleted={async () => { await loadNpcs(); }} />
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <Tooltip label="Edit">
-                        <button className="btn-primary btn-icon" onClick={() => setSelectedNpcId(n.id)} aria-label="Edit NPC">
-                          <IconPen />
-                        </button>
-                      </Tooltip>
-                      {n.current_encounter_slug && (
-                        <button className="btn-primary" onClick={() => window.open(`/e/${n.current_encounter_slug}`, '_blank')}>Enter encounter</button>
-                      )}
-                      <CreateNewEncounterButton onCreated={async () => { await loadNpcs(); }} npcId={n.id} />
-                      <DeleteNpcButton npcId={n.id} onDeleted={async () => { await loadNpcs(); }} />
-                    </div>
+                    {hasCurrent && (
+                      <div className="surface npc-peek-panel" style={{ padding: 10, marginLeft: 24, marginRight: 24 }}>
+                        <NpcPeekingPanel lastMessage={n.current_encounter_last_message || ''} url={shareUrl} />
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {npcs.length === 0 && <div>No NPCs yet.</div>}
             </div>
           )}
